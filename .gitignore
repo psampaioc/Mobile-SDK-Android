@@ -1,0 +1,14 @@
+.gradle/
+.android-sdk/
+build/
+app/build/
+local.properties
+*.iml
+.idea/
+captures/
+externalNativeBuild/
+cmake-build-*/
+
+# Local diagnostics and generated output
+diagnostics/*.ndjson
+diagnostics/*.log

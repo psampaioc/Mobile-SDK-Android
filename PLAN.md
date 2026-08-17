@@ -46,6 +46,8 @@ Build a minimal Android transport and mission application for the DJI Matrice 21
 
 The active branch is the official DJI MSDK V4.18 sample baseline. It is built from DJI’s `v4.18` tag, installed as `com.dji.sdk.sample`, and launched on the Tab S9 without an aircraft connected. This validates the vendor sample’s Android 16/API 36 install and startup path. Registration remains untested until a user-provided DJI API key is configured locally.
 
+The official sample reads `DJI_API_KEY` from the environment or the ignored `Sample Code/local.properties` file and injects it as a manifest placeholder. The key is not committed.
+
 APK:
 
 `app/build/outputs/apk/debug/app-debug.apk`

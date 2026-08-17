@@ -3,6 +3,13 @@ apply plugin: 'kotlin-android'
 apply plugin: 'kotlin-android-extensions'
 apply plugin: 'kotlin-kapt'
 
+def localProperties = new Properties()
+def localPropertiesFile = rootProject.file('local.properties')
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.withInputStream { localProperties.load(it) }
+}
+def djiApiKey = System.getenv('DJI_API_KEY') ?: localProperties.getProperty('DJI_API_KEY', '')
+
 repositories {
     mavenLocal()
 }
@@ -16,6 +23,7 @@ android {
         minSdkVersion 23
         targetSdkVersion 34
         multiDexEnabled true
+        manifestPlaceholders = [djiApiKey: djiApiKey]
         versionCode 1
         ndk {
             // On x86 devices that run Android API 23 or above, if the application is targeted with API 23 or

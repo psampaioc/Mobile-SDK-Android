@@ -44,7 +44,7 @@ Build a minimal Android transport and mission application for the DJI Matrice 21
 
 ## Current milestone
 
-The active branch is the official DJI MSDK V4.18 sample baseline. It is built from DJI’s `v4.18` tag, installed as `com.dji.sdk.sample`, and launched on the Tab S9 without an aircraft connected. This validates the vendor sample’s Android 16/API 36 install and startup path. Registration remains untested until a user-provided DJI API key is configured locally.
+The active branch is the official DJI MSDK V4.18 sample baseline. It is built from DJI’s `v4.18` tag, installed as `com.dji.sdk.sample`, and launched on the Tab S9 without an aircraft connected. This validates the vendor sample’s Android 16/API 36 install and startup path. With the user-provided local key, the sample registered successfully; the UI remains `Status: No Product Connected` because the aircraft and Cendence are not connected.
 
 The official sample reads `DJI_API_KEY` from the environment or the ignored `Sample Code/local.properties` file and injects it as a manifest placeholder. The key is not committed.
 
@@ -69,7 +69,7 @@ export ANDROID_HOME="$ANDROID_SDK_ROOT"
 - Install and launch a no-aircraft debug build.
 - Record Android 16/MSDK V4.18 compatibility issues.
 
-Current result: the official sample APK builds, installs, and launches on Android 16. No fatal runtime crash was observed. The app remains alive with the placeholder key and no aircraft connected. The custom prototype is preserved in the earlier `main` commit and is not the active baseline.
+Current result: the official sample APK builds, installs, launches, and registers successfully on Android 16. No fatal runtime crash was observed. The app remains alive with no aircraft connected. The custom prototype is preserved in the earlier `main` commit and is not the active baseline.
 
 ### Phase 2: Local SDK connection
 
@@ -101,7 +101,7 @@ Current result: the flight, RTK, and gimbal subscriptions compile and are attach
 ### Phase 5: Bench validation
 
 - Install APK through ADB.
-- Verify registration with the user’s local key.
+- Verify registration with the user’s local key. **Passed:** DJI callback/log reported `API Key successfully registered`.
 - Detect Cendence/M210 RTK V2.
 - Verify video, RTK telemetry, gimbal angles, and diagnostic export.
 - Do not issue flight commands automatically.

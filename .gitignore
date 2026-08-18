@@ -3,12 +3,27 @@
 build/
 app/build/
 local.properties
+**/local.properties
+AGENTS.md
+**/AGENTS.md
+*.env
+*.env.*
+*.keystore
+*.jks
+*.p12
+*.pem
+*.key
 *.iml
 .idea/
 captures/
 externalNativeBuild/
 cmake-build-*/
+.codex/
+.AI/
+graphify-out/
 
 # Local diagnostics and generated output
 diagnostics/*.ndjson
 diagnostics/*.log
+*.ndjson
+*.log

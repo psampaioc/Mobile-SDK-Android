@@ -8,7 +8,7 @@ The repository currently contains DJI's official Mobile SDK for Android V4.18 sa
 
 The official sample has been:
 
-- forked to `psampaioc/Mobile-SDK-Android`;
+- forked to the project's public GitHub repository;
 - based locally on DJI's `v4.18` tag;
 - built successfully on Ubuntu with the legacy Gradle/Android toolchain;
 - installed on the Samsung Galaxy Tab S9;
@@ -27,8 +27,8 @@ Tablet model:       SM-X710 (Galaxy Tab S9 Wi-Fi)
 Android release:    16
 Android API level:  36
 ABIs:               arm64-v8a, armeabi-v7a, armeabi
-ADB endpoint:       10.231.211.136:5555
-Ubuntu endpoint:    10.231.211.176 on the same LAN
+ADB endpoint:       tablet Wi-Fi address on the private project LAN
+Ubuntu endpoint:    Ubuntu host on the same private LAN
 Transport:          ADB over Wi-Fi
 ```
 

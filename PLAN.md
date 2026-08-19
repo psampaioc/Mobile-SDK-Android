@@ -35,12 +35,12 @@ Build a minimal Android transport and mission application for the DJI Matrice 21
 4. Collected read-only device diagnostics.
 5. Installed local Google Android command-line tools and Android SDK platforms 33/34.
 6. Installed JDK 11 for the MSDK V4.18 toolchain.
-7. Created the clean Android project and Gradle wrapper.
-8. Added the DJI MSDK V4.18 dependency.
-9. Added a first `DjiConnectionManager` registration/product-status slice.
-10. Built `app-debug.apk` successfully.
-11. Installed/launched the APK on Android 16 and fixed the official DJI V4.18 loader/runtime dependencies.
-12. Added read-only flight, RTK, and gimbal callback plumbing with app-private `telemetry.ndjson` export.
+7. Cloned and published a public fork of DJI's official Android MSDK V4 sample.
+8. Built `app-debug.apk` successfully from the official V4.18 sample.
+9. Installed/launched the sample on Android 16 and fixed its Tab S9 runtime compatibility issues.
+10. Proved SDK registration, Cendence/M210 connection, and live FPV decoding.
+
+The former experimental `com.matrice.transport` APK was removed from the tablet. It is not part of this repository or the active solution.
 
 ## Current milestone
 
@@ -97,7 +97,90 @@ Current result: the official sample APK builds, installs, launches, registers, c
 - `NetworkTransport`: disabled until local validation; documented UDP/TCP/WebSocket interface later.
 - `DiagnosticLogger`: structured logs and local export.
 
-Current result: product connection and video are proven. RTK, gimbal, flight-state callbacks, and NDJSON export remain to be verified against the connected aircraft.
+Current result: product connection and video are proven. RTK, gimbal, flight-state callbacks, and NDJSON export have **not** been implemented or verified in the active official-sample baseline.
+
+## Product and UI blueprint
+
+### Product decision: extend the validated sample first
+
+Do not rename, copy, or replace the entire DJI sample now. It is the known-good hardware compatibility harness: it already registers the provisioned DJI application identity, opens the Cendence accessory, identifies `PM420PRO_RTK`, and decodes video on this exact tablet.
+
+The next implementation is a new, small **Transport** entry inside the existing `app` module. It will have a separate package and screen hierarchy, while leaving the upstream sample demos available for diagnosis. This is intentionally not a second Android application yet: a different application ID and signing certificate require their own matching DJI developer-console registration. Once the Transport screen passes the local-data acceptance gate, it can be extracted into its own clean module/application without guessing about the device compatibility path.
+
+### Intended landscape screen
+
+The operator is a bench/field user whose single primary job is to see an unobstructed camera image while checking the pose and camera attitude needed to correlate video with RTK/GPS data.
+
+```
+┌ Camera source ▾ ─ Settings ▾ ─ Input mode ▾ ─ connection/record state ┐
+│                                                                         │
+│                                                                         │
+│                  VIDEO PIXELS ONLY — no labels or overlays             │
+│                                                                         │
+├─────────────────────────────────────────────────────────────────────────┤
+│ PRIMARY GIMBAL  pitch  roll  yaw  │ RTK / GPS │ position │ velocity    │
+│ altitude │ heading │ flight state │ source │ timestamps │ log state    │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+- The video surface has no persistent text, reticle, telemetry, or controls painted over it. Opening a system dropdown may temporarily cover part of the screen; it closes immediately after selection.
+- **Camera source** lists only source/camera routes that the connected product exposes. It reports both the selected logical source and the active decoder source; it never guesses a payload camera.
+- **Settings** contains recording/log export, stream destination, units, and diagnostic level. It contains no hidden flight action.
+- **Input mode** is a safety state, not an aircraft command. The initial options are `Observe` (enabled), `Virtual stick` (present but disabled until a dedicated safety review), and `Mission` (planner only, no upload/start control in the first data milestone).
+- The lower data rail makes primary-gimbal pitch/roll/yaw visually dominant. Every gimbal value is labelled with its gimbal/camera source, because a dual-gimbal aircraft must not silently associate the wrong attitude with a video frame.
+
+The visual character is deliberately instrument-like rather than DJI Pilot-like: neutral dark graphite background, high-legibility off-white labels, restrained amber for degraded data, and cyan only for a confirmed RTK fixed state. The distinctive element is the uninterrupted "camera window" bounded by an explicit telemetry rail, so visual data is never confused with a HUD annotation.
+
+### Mission planner scope
+
+The application can eventually provide both a stored WGS84 waypoint list and a map-based editor. The map will be our own planner view (for example, MapLibre with an approved tile source), not an import or recreation of DJI Pilot's mission UI/files.
+
+Initial sequence:
+
+1. Import or enter a validated WGS84 waypoint list; show it as a read-only planned mission.
+2. Add a map editor with explicit altitude/speed/action validation.
+3. Add manual `Upload`, `Start`, `Pause`, and `Cancel` only after simulator/stationary bench tests and a separate review.
+
+Virtual-stick control is also deferred. Merely selecting a menu item will never enable virtual stick or send aircraft control data. Cendence physical controls, RC override, and RTH remain authoritative.
+
+## Android data architecture
+
+There is a frontend and a backend-like data layer, but not a web backend:
+
+- **Frontend:** one Android activity/screen, video surface, three dropdowns, and the telemetry rail.
+- **Android service/data layer:** DJI callbacks are normalized into immutable data records; it owns logging and later network publication.
+- **DJI SDK API:** the local Java/Kotlin API between the app and Cendence/aircraft. It is not an internet service.
+- **Ubuntu receiver:** a separate process on the edge computer receives the documented stream, validates it, and is the place that publishes ROS 2 topics.
+
+The first Transport implementation will use these modules, with read-only behavior until the mission phase:
+
+- `DjiConnectionManager` — registration, product/component lifecycle, explicit connection state.
+- `VideoManager` — raw video-feed subscription, decoder surface, source inventory/selection, stream metadata.
+- `TelemetryManager` — flight-controller and RTK state callbacks; no flight-control calls.
+- `GimbalManager` — gimbal state callbacks and camera/gimbal association; no gimbal-control calls.
+- `DiagnosticLogger` — append-only local NDJSON and export.
+- `NetworkTransport` — initially disabled; later publishes the documented local protocol.
+- `MissionManager` — initially validates/stores plans only; no operator calls until its gated phase.
+
+### Timestamp and odometry contract
+
+Latency must be measured, not inferred from a screen image. Each record will contain an Android wall-clock receive time, an Android monotonic receive time, a sequence number, source/camera/gimbal identifiers, and a DJI/source timestamp only when that particular DJI callback supplies one. Missing source time remains `null`; Android receive time will never be labelled as aircraft capture time.
+
+For video, the receiver will also see encoded-stream PTS/access-unit sequence information when available. That is useful for ordering and delay measurement but is not automatically a camera-exposure timestamp. Establishing camera-frame-to-gimbal synchronization for visual odometry is a separate calibration/measurement task; flight-controller and gimbal callbacks are asynchronous and must not be presented as frame-synchronous without evidence.
+
+## Edge/ROS 2 transport decision
+
+Do **not** run ROS 2/DDS directly on the Android tablet in the first implementation. It would require maintaining native ROS/DDS builds for Android, multicast/discovery behavior on the field network, and a much harder debugging path while the Cendence already owns the tablet USB port.
+
+Instead, the tablet is a small publisher over the existing Wi-Fi/Ethernet network and Ubuntu owns ROS 2:
+
+| Data | Tablet publication | Ubuntu responsibility |
+| --- | --- | --- |
+| Telemetry | Versioned NDJSON over a local WebSocket/TCP endpoint, one record per line/message | Receive, validate schema/sequence/timestamps, publish ROS 2 telemetry topics |
+| Video | H.264 Annex-B packetized as RTP/UDP, with negotiated destination and periodic codec configuration/keyframes | Depacketize/decode or pass H.264 to the detection pipeline; publish image/compressed-video topics as appropriate |
+| Diagnostics | Local export first; optional pull over ADB or explicit file export | Archive/replay for latency analysis |
+
+The first network endpoint will bind only to the configured private-LAN destination, not a public interface. It will carry a protocol version, stream ID, sequence number, and timestamp fields. We will implement the Ubuntu receiver/ROS 2 bridge after the Android-local NDJSON data and video source selection are proven.
 
 ### Phase 4: Video and telemetry
 

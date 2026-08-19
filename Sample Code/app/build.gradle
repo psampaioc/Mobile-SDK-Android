@@ -21,7 +21,10 @@ android {
     defaultConfig {
         applicationId "com.dji.sdk.sample"
         minSdkVersion 23
-        targetSdkVersion 34
+        // DJI MSDK V4.18 creates a mutable implicit PendingIntent for the
+        // USB-accessory permission flow. Android blocks that legacy flow for
+        // apps targeting API 34+, preventing Cendence/M210 connection.
+        targetSdkVersion 33
         multiDexEnabled true
         manifestPlaceholders = [djiApiKey: djiApiKey]
         versionCode 1

@@ -21,7 +21,7 @@ Build a minimal Android transport and mission application for the DJI Matrice 21
 - ABI: arm64-v8a with armeabi-v7a/armeabi compatibility.
 - Display: 1600x2560, density 340.
 - Storage: approximately 193 GB available.
-- USB state: MTP + ADB.
+- USB state during DJI bench test: Android Open Accessory (`DJI`, model `T600`) + wireless ADB.
 - Host: Ubuntu Linux, Java 11 for the legacy DJI build stack; Java 21 remains installed.
 - Local Android SDK: `.android-sdk/`.
 - DJI SDK baseline: MSDK V4.18.
@@ -44,7 +44,15 @@ Build a minimal Android transport and mission application for the DJI Matrice 21
 
 ## Current milestone
 
-The active branch is the official DJI MSDK V4.18 sample baseline. It is built from DJI’s `v4.18` tag, installed as `com.dji.sdk.sample`, and launched on the Tab S9 without an aircraft connected. This validates the vendor sample’s Android 16/API 36 install and startup path. With the user-provided local key, the sample registered successfully; the UI remains `Status: No Product Connected` because the aircraft and Cendence are not connected.
+The active branch is the official DJI MSDK V4.18 sample baseline, adapted only for the Tab S9 compatibility issues observed during a props-off bench test. The app now registers, opens the Cendence USB accessory, and identifies the M210 RTK V2 as `PM420PRO_RTK`. Its firmware was reported as `01.00.0710`.
+
+The FPV video feed is visibly decoded and displayed by the Tab S9. In the official Video Feeder sample, the active secondary source is `FPV_CAM`; the primary source remains `UNKNOWN`, which is expected until a payload camera/source is selected and detected.
+
+Compatibility fixes required for Android 16/API 36:
+
+- target SDK 33 instead of 34, because the legacy DJI V4.18 USB-permission flow uses a mutable implicit `PendingIntent` that Android blocks for target SDK 34+;
+- remove the obsolete Gradle `MaxPermSize` JVM argument so the legacy build stack runs on JDK 11;
+- guard the official sample's delayed `FlyZoneManager` access, which otherwise crashes while the aircraft components are still initializing.
 
 The official sample reads `DJI_API_KEY` from the environment or the ignored `Sample Code/local.properties` file and injects it as a manifest placeholder. The key is not committed.
 
@@ -69,7 +77,7 @@ export ANDROID_HOME="$ANDROID_SDK_ROOT"
 - Install and launch a no-aircraft debug build.
 - Record Android 16/MSDK V4.18 compatibility issues.
 
-Current result: the official sample APK builds, installs, launches, and registers successfully on Android 16. No fatal runtime crash was observed. The app remains alive with no aircraft connected. The custom prototype is preserved in the earlier `main` commit and is not the active baseline.
+Current result: the official sample APK builds, installs, launches, registers, connects to the Cendence/M210 RTK V2, and displays the FPV video feed on Android 16. The old `com.matrice.transport` prototype was removed from the tablet to avoid confusion; it is not the active baseline.
 
 ### Phase 2: Local SDK connection
 
@@ -89,7 +97,7 @@ Current result: the official sample APK builds, installs, launches, and register
 - `NetworkTransport`: disabled until local validation; documented UDP/TCP/WebSocket interface later.
 - `DiagnosticLogger`: structured logs and local export.
 
-Current result: the flight, RTK, and gimbal subscriptions compile and are attached only after an aircraft product callback. The export file is app-private and is not created during no-aircraft testing.
+Current result: product connection and video are proven. RTK, gimbal, flight-state callbacks, and NDJSON export remain to be verified against the connected aircraft.
 
 ### Phase 4: Video and telemetry
 
@@ -102,8 +110,8 @@ Current result: the flight, RTK, and gimbal subscriptions compile and are attach
 
 - Install APK through ADB.
 - Verify registration with the user’s local key. **Passed:** DJI callback/log reported `API Key successfully registered`.
-- Detect Cendence/M210 RTK V2.
-- Verify video, RTK telemetry, gimbal angles, and diagnostic export.
+- Detect Cendence/M210 RTK V2. **Passed:** Cendence reports as DJI `T600`; SDK product model is `PM420PRO_RTK`.
+- Verify video, RTK telemetry, gimbal angles, and diagnostic export. **Video passed:** Tab S9 decodes and displays `FPV_CAM`; telemetry/gimbal/export remain open.
 - Do not issue flight commands automatically.
 
 ### Phase 6: Ubuntu forwarding
@@ -158,16 +166,17 @@ Current result: the flight, RTK, and gimbal subscriptions compile and are attach
 
 ## Tablet control model
 
-The Ubuntu computer is connected to the Tab S9 through a physical USB cable. `adb` starts a local ADB server on Ubuntu and communicates with the Android Debug Bridge daemon (`adbd`) on the tablet over the authorized USB connection.
+The Ubuntu computer normally reaches the Tab S9 through wireless ADB on the shared local network. Initial pairing/installation uses USB; the tablet then uses its USB-C connection exclusively for the Cendence while Ubuntu retains ADB access over Wi-Fi.
 
-This is not SSH, Wi-Fi remote desktop, scrcpy, Appium, or uiautomator2. We currently use only:
+This is not SSH, Wi-Fi remote desktop, scrcpy, Appium, or uiautomator2. We currently use:
 
 - `adb devices -l` for connection state.
 - `adb shell getprop`, `settings`, `df`, and `dumpsys` for read-only diagnostics.
 - `adb install` for explicitly approved APK installation.
 - `adb logcat` for application logs.
+- limited `adb shell input` and `uiautomator` navigation for explicitly approved, non-flight sample screens.
 
-We are not sending taps, swipes, typed input, key events, screenshots, or arbitrary control commands. ADB authorization allows those capabilities in principle, but they are outside this project’s current workflow.
+No takeoff, arming, landing, mission, virtual-stick, or gimbal-control command is part of this workflow.
 
 ## Useful commands
 

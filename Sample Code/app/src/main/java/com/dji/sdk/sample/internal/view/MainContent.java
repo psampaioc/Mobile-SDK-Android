@@ -680,6 +680,11 @@ public class MainContent extends RelativeLayout {
         mHander.postDelayed(new Runnable() {
             @Override
             public void run() {
+                if (DJISDKManager.getInstance().getFlyZoneManager() == null) {
+                    ToastUtils.setResultToToast("Fly-zone manager is not available yet");
+                    return;
+                }
+
                 DJISDKManager.getInstance().getFlyZoneManager().getPreciseDatabaseVersion(new CommonCallbacks.CompletionCallbackWith<String>() {
                     @Override
                     public void onSuccess(String s) {

@@ -7,6 +7,7 @@ Build a minimal Android transport and mission application for the DJI Matrice 21
 ## Safety boundaries
 
 - No automatic arming, takeoff, landing, or mission execution.
+- The development scope includes the full manual-control UI: virtual stick, mission upload/start/pause/cancel, and supported gimbal controls. The current aircraft is dismantled/props-off, so these features may be implemented and bench validated.
 - Mission upload, start, pause, and cancel must remain explicit manual actions.
 - First mission testing is simulator, stationary, props-off, or otherwise harmless.
 - Do not connect to or fly the aircraft until the bench-test gate is explicitly approved.
@@ -105,7 +106,7 @@ Current result: product connection and video are proven. RTK, gimbal, flight-sta
 
 Do not rename, copy, or replace the entire DJI sample now. It is the known-good hardware compatibility harness: it already registers the provisioned DJI application identity, opens the Cendence accessory, identifies `PM420PRO_RTK`, and decodes video on this exact tablet.
 
-The next implementation is a new, small **Transport** entry inside the existing `app` module. It will have a separate package and screen hierarchy, while leaving the upstream sample demos available for diagnosis. This is intentionally not a second Android application yet: a different application ID and signing certificate require their own matching DJI developer-console registration. Once the Transport screen passes the local-data acceptance gate, it can be extracted into its own clean module/application without guessing about the device compatibility path.
+The next implementation is a new, small **Transport** entry inside the existing `app` module. It is another page *inside the same installed app*: from the official sample's demo list, the user selects `Transport`; Android does not install or launch a second application. Once stable, `Transport` becomes the default landing page and the official demonstrations remain available only through a `Diagnostics` entry. This is intentionally not a second Android application yet: a different application ID and signing certificate require their own matching DJI developer-console registration. Once the Transport screen passes the local-data acceptance gate, it can be extracted into its own clean module/application without guessing about the device compatibility path.
 
 ### Intended landscape screen
 
@@ -126,7 +127,7 @@ The operator is a bench/field user whose single primary job is to see an unobstr
 - The video surface has no persistent text, reticle, telemetry, or controls painted over it. Opening a system dropdown may temporarily cover part of the screen; it closes immediately after selection.
 - **Camera source** lists only source/camera routes that the connected product exposes. It reports both the selected logical source and the active decoder source; it never guesses a payload camera.
 - **Settings** contains recording/log export, stream destination, units, and diagnostic level. It contains no hidden flight action.
-- **Input mode** is a safety state, not an aircraft command. The initial options are `Observe` (enabled), `Virtual stick` (present but disabled until a dedicated safety review), and `Mission` (planner only, no upload/start control in the first data milestone).
+- **Input mode** is a safety state, not an aircraft command by itself. The options are `Observe`, `Virtual stick`, and `Mission`. Selecting a mode changes the controls shown; it does not arm, take off, upload, start a mission, or move a gimbal. Each such action is a separate labelled button with explicit operator confirmation.
 - The lower data rail makes primary-gimbal pitch/roll/yaw visually dominant. Every gimbal value is labelled with its gimbal/camera source, because a dual-gimbal aircraft must not silently associate the wrong attitude with a video frame.
 
 The visual character is deliberately instrument-like rather than DJI Pilot-like: neutral dark graphite background, high-legibility off-white labels, restrained amber for degraded data, and cyan only for a confirmed RTK fixed state. The distinctive element is the uninterrupted "camera window" bounded by an explicit telemetry rail, so visual data is never confused with a HUD annotation.
@@ -141,7 +142,7 @@ Initial sequence:
 2. Add a map editor with explicit altitude/speed/action validation.
 3. Add manual `Upload`, `Start`, `Pause`, and `Cancel` only after simulator/stationary bench tests and a separate review.
 
-Virtual-stick control is also deferred. Merely selecting a menu item will never enable virtual stick or send aircraft control data. Cendence physical controls, RC override, and RTH remain authoritative.
+Virtual-stick and mission-control features are in scope after the local telemetry/data path. Merely selecting a menu item will never enable virtual stick or send aircraft control data. Cendence physical controls, RC override, and RTH remain authoritative.
 
 ## Android data architecture
 

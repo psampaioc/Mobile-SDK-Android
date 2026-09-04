@@ -35,6 +35,7 @@ import com.dji.sdk.sample.missionplanner.MissionDraftLibrary;
 import com.dji.sdk.sample.missionplanner.MissionDraftValidator;
 import com.dji.sdk.sample.missionplanner.MissionRouteEditor;
 import com.dji.sdk.sample.missionplanner.MissionPreflight;
+import com.dji.sdk.sample.missionplanner.MissionSyncState;
 import com.dji.sdk.sample.missionplanner.MissionWaypoint;
 import com.dji.sdk.sample.missionplanner.WaypointMissionFactory;
 import com.dji.sdk.sample.missionplanner.map.MapLibreMissionMapView;
@@ -47,6 +48,7 @@ import dji.common.flightcontroller.LocationCoordinate3D;
 import dji.common.model.LocationCoordinate2D;
 import dji.common.mission.waypoint.WaypointMission;
 import dji.common.mission.waypoint.WaypointMissionExecutionEvent;
+import dji.common.mission.waypoint.WaypointMissionState;
 import dji.common.util.CommonCallbacks;
 import dji.sdk.mission.MissionControl;
 import dji.sdk.mission.waypoint.WaypointMissionOperator;
@@ -59,6 +61,7 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
     private final EditText name;
     private final Spinner finish;
     private final TextView route;
+    private final TextView sync;
     private final TextView home;
     private final TextView status;
     private final WaypointMissionOperator operator;
@@ -81,7 +84,19 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
     /** Last home coordinate positively acknowledged by FlightController.setHomeLocation. */
     private final ConfirmedDjiHomeState confirmedDjiHome = new ConfirmedDjiHomeState();
     private final WaypointMissionOperatorListener missionListener = new WaypointMissionOperatorListener() {
-        @Override public void onDownloadUpdate(@NonNull dji.common.mission.waypoint.WaypointMissionDownloadEvent event) { }
+        @Override public void onDownloadUpdate(@NonNull dji.common.mission.waypoint.WaypointMissionDownloadEvent event) {
+            post(() -> {
+                if (event.getError() != null) {
+                    status.setText("Download failed: " + event.getError().getDescription());
+                } else if (event.getProgress() != null) {
+                    status.setText(event.getProgress().isSummaryDownloaded
+                            ? "Downloading mission waypoint " + (event.getProgress().downloadedWaypointIndex + 1)
+                            + " of " + event.getProgress().totalWaypointCount + "."
+                            : "Downloading mission summary.");
+                }
+                renderMissionSync();
+            });
+        }
 
         @Override public void onUploadUpdate(@NonNull dji.common.mission.waypoint.WaypointMissionUploadEvent event) {
             post(() -> {
@@ -97,6 +112,7 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
                 status.setText(event.getProgress() == null ? "Mission — " + state
                         : "Mission — " + state + ", waypoint "
                         + (event.getProgress().targetWaypointIndex + 1) + ".");
+                renderMissionSync();
             });
         }
 
@@ -116,6 +132,7 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
         name = findViewById(R.id.mission_mvp_name);
         finish = findViewById(R.id.mission_mvp_finish);
         route = findViewById(R.id.mission_mvp_route);
+        sync = findViewById(R.id.mission_mvp_sync);
         home = findViewById(R.id.mission_mvp_home);
         status = findViewById(R.id.mission_mvp_status);
         library = new MissionDraftLibrary(context);
@@ -157,6 +174,7 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
         ((Button) findViewById(R.id.mission_mvp_save)).setOnClickListener(view -> saveDraft());
         ((Button) findViewById(R.id.mission_mvp_load)).setOnClickListener(view -> load());
         ((Button) findViewById(R.id.mission_mvp_upload)).setOnClickListener(view -> upload());
+        ((Button) findViewById(R.id.mission_mvp_download)).setOnClickListener(view -> download());
         ((Button) findViewById(R.id.mission_mvp_start)).setOnClickListener(view -> start());
         ((Button) findViewById(R.id.mission_mvp_pause)).setOnClickListener(view -> operator.pauseMission(result("Pause")));
         ((Button) findViewById(R.id.mission_mvp_cancel)).setOnClickListener(view -> operator.stopMission(result("Cancel")));
@@ -196,7 +214,24 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
             uploaded = error == null;
             status.setText(error == null ? "Upload successful. Start is now available."
                     : "Upload failed: " + error.getDescription());
+            post(this::renderMissionSync);
         });
+    }
+
+    private void download() {
+        WaypointMissionState currentState = operator.getCurrentState();
+        if (!WaypointMissionState.EXECUTING.equals(currentState)
+                && !WaypointMissionState.EXECUTION_PAUSED.equals(currentState)) {
+            status.setText("REMOTE UNKNOWN — DJI download is available only while executing or paused.");
+            renderMissionSync();
+            return;
+        }
+        status.setText("Downloading mission evidence from aircraft.");
+        operator.downloadMission(error -> post(() -> {
+            if (error != null) status.setText("Download failed: " + error.getDescription());
+            else status.setText("Download request completed. Remote route content remains SDK-limited.");
+            renderMissionSync();
+        }));
     }
 
     private void start() {
@@ -585,6 +620,15 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
         route.setText(String.format(Locale.US, "ROUTE — %d WAYPOINTS%s", draft.getWaypoints().size(),
                 draftDirty ? " · LOCAL CHANGES" : ""));
         map.render(draft);
+        renderMissionSync();
+    }
+
+    private void renderMissionSync() {
+        if (sync == null) return;
+        WaypointMissionState currentState = operator == null ? null : operator.getCurrentState();
+        String stateName = currentState == null ? "" : currentState.getName();
+        sync.setText(MissionSyncState.resolve(loadedMission != null && loadedDraft != null, uploaded,
+                draftDirty, stateName).render());
     }
 
     private MissionDraft requireCurrentLoadedDraft() {
@@ -684,6 +728,7 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
             operator.addListener(missionListener);
             missionListenerAttached = true;
         }
+        renderMissionSync();
     }
 
     @Override protected void onDetachedFromWindow() {

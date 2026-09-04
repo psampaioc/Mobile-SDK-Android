@@ -14,6 +14,7 @@ public final class MissionPlannerUnitTestSuite {
         preservesExplicitFinishAction();
         editsOrderedRouteWithoutChangingDefaults();
         reordersSelectedWaypointWithoutChangingIt();
+        distinguishesLocalAndRemoteMissionEvidence();
         detectsLoadedDraftChanges();
         rejectsUnsafeConnectedState();
         rejectsMissionStartUntilCurrentSessionReviewIsComplete();
@@ -78,6 +79,25 @@ public final class MissionPlannerUnitTestSuite {
                 "moving later must preserve the selected waypoint");
         require(!editor.moveEarlier(0), "first waypoint cannot move earlier");
         require(!editor.moveLater(2), "last waypoint cannot move later");
+    }
+
+    private static void distinguishesLocalAndRemoteMissionEvidence() {
+        MissionSyncState.Snapshot local = MissionSyncState.resolve(false, false, false, "READY_TO_UPLOAD");
+        require(local.getLocal() == MissionSyncState.Local.LOCAL_DRAFT,
+                "a local draft must remain local evidence");
+        require(local.getRemote() == MissionSyncState.Remote.REMOTE_UNKNOWN,
+                "idle state cannot prove the aircraft mission");
+        MissionSyncState.Snapshot uploaded = MissionSyncState.resolve(true, true, false, "READY_TO_EXECUTE");
+        require(uploaded.getLocal() == MissionSyncState.Local.UPLOADED_THIS_SESSION,
+                "successful upload is limited to this app session");
+        require(uploaded.getRemote() == MissionSyncState.Remote.REMOTE_UNKNOWN,
+                "upload does not become remote readback");
+        MissionSyncState.Snapshot changed = MissionSyncState.resolve(true, true, true, "READY_TO_EXECUTE");
+        require(changed.getLocal() == MissionSyncState.Local.LOCAL_DRAFT,
+                "local edits must clear load/upload evidence");
+        MissionSyncState.Snapshot executing = MissionSyncState.resolve(false, false, false, "EXECUTING");
+        require(executing.getRemote() == MissionSyncState.Remote.EXECUTING,
+                "DJI execution state is remote evidence");
     }
 
     private static void rejectsUnsafeConnectedState() {

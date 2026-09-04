@@ -15,6 +15,7 @@
                     <Button android:id="@+id/mission_mvp_delete" android:layout_width="0dp" android:layout_height="38dp" android:layout_marginStart="6dp" android:layout_weight="1" android:background="@drawable/operate_mvp_button" android:text="DELETE" android:textColor="#162A36" android:textSize="10sp" />
                 </LinearLayout>
                 <TextView android:id="@+id/mission_mvp_route" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:text="ROUTE — 0 WAYPOINTS" android:textColor="#162A36" android:textSize="12sp" />
+                <TextView android:id="@+id/mission_mvp_sync" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="3dp" android:text="LOCAL DRAFT · REMOTE UNKNOWN" android:textColor="#667B87" android:textSize="10sp" />
                 <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:text="DEFAULT ALTITUDE (m)" android:textColor="#667B87" android:textSize="10sp" />
                 <EditText android:id="@+id/mission_mvp_altitude" android:layout_width="match_parent" android:layout_height="40dp" android:contentDescription="Default altitude in metres" android:inputType="numberDecimal" android:text="30" android:textSize="16sp" />
                 <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:text="SPEED (m/s)" android:textColor="#667B87" android:textSize="10sp" />
@@ -28,6 +29,7 @@
                 <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:orientation="horizontal">
                     <Button android:id="@+id/mission_mvp_load" android:layout_width="0dp" android:layout_height="38dp" android:layout_weight="1" android:background="@drawable/operate_mvp_button" android:text="LOAD" android:textColor="#162A36" android:textSize="10sp" />
                     <Button android:id="@+id/mission_mvp_upload" android:layout_width="0dp" android:layout_height="38dp" android:layout_marginStart="6dp" android:layout_weight="1" android:background="@drawable/operate_mvp_button" android:text="UPLOAD" android:textColor="#162A36" android:textSize="10sp" />
+                    <Button android:id="@+id/mission_mvp_download" android:layout_width="0dp" android:layout_height="38dp" android:layout_marginStart="6dp" android:layout_weight="1" android:background="@drawable/operate_mvp_button" android:text="DOWNLOAD" android:textColor="#162A36" android:textSize="10sp" />
                 </LinearLayout>
                 <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:orientation="horizontal">
                     <Button android:id="@+id/mission_mvp_start" android:layout_width="0dp" android:layout_height="38dp" android:layout_weight="1" android:background="@drawable/operate_mvp_button" android:text="START" android:textColor="#162A36" android:textSize="10sp" />

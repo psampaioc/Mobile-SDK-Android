@@ -4,6 +4,7 @@ import java.util.Arrays;
 import java.util.List;
 
 import com.dji.sdk.sample.operate.FlightReadinessModel;
+import com.dji.sdk.sample.operate.SessionTimeline;
 
 /** Dependency-free JVM coverage for the mission draft contract. */
 public final class MissionPlannerUnitTestSuite {
@@ -17,6 +18,7 @@ public final class MissionPlannerUnitTestSuite {
         distinguishesLocalAndRemoteMissionEvidence();
         calculatesRouteStatisticsFromLocalDraft();
         detectsCircleAndPolygonBoundaryWarnings();
+        boundsSessionTimelineWithoutBlockingProducers();
         detectsLoadedDraftChanges();
         rejectsUnsafeConnectedState();
         rejectsMissionStartUntilCurrentSessionReviewIsComplete();
@@ -144,6 +146,17 @@ public final class MissionPlannerUnitTestSuite {
                 new PlanningBoundary.Point(0.001d, 0.001d), new PlanningBoundary.Point(0.001d, -0.001d)));
         require(BoundaryEvaluator.evaluate(throughPolygon, Arrays.asList(exclusionPolygon)).getWarningCount() == 1,
                 "route segment crossing an exclusion polygon must warn");
+    }
+
+    private static void boundsSessionTimelineWithoutBlockingProducers() {
+        SessionTimeline timeline = new SessionTimeline(2);
+        timeline.record(1L, SessionTimeline.TimeSource.OPERATOR_ACTION, "LOAD", "Pressed Load");
+        timeline.record(2L, SessionTimeline.TimeSource.DJI_CALLBACK, "MISSION", "Ready");
+        timeline.record(3L, SessionTimeline.TimeSource.ANDROID_OBSERVATION, "LINK", "Connected");
+        require(timeline.snapshot().size() == 2 && timeline.getDroppedCount() == 1,
+                "timeline must bound old entries rather than blocking producers");
+        require(timeline.snapshot().get(0).getTimeSource() == SessionTimeline.TimeSource.DJI_CALLBACK,
+                "timeline must retain explicit time source");
     }
 
 

@@ -95,6 +95,7 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
     private final WaypointMissionOperatorListener missionListener = new WaypointMissionOperatorListener() {
         @Override public void onDownloadUpdate(@NonNull dji.common.mission.waypoint.WaypointMissionDownloadEvent event) {
             post(() -> {
+                SessionTimelineStore.dji("MISSION_DOWNLOAD", event.getError() == null ? "Download update" : event.getError().getDescription());
                 if (event.getError() != null) {
                     status.setText("Download failed: " + event.getError().getDescription());
                 } else if (event.getProgress() != null) {
@@ -109,6 +110,7 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
 
         @Override public void onUploadUpdate(@NonNull dji.common.mission.waypoint.WaypointMissionUploadEvent event) {
             post(() -> {
+                SessionTimelineStore.dji("MISSION_UPLOAD", "Upload update");
                 if (event.getProgress() != null) {
                     status.setText("Uploading waypoint " + (event.getProgress().uploadedWaypointIndex + 1) + ".");
                 }
@@ -118,6 +120,7 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
         @Override public void onExecutionUpdate(@NonNull WaypointMissionExecutionEvent event) {
             post(() -> {
                 String state = event.getCurrentState() == null ? "Unknown" : event.getCurrentState().getName();
+                SessionTimelineStore.dji("MISSION_EXECUTION", state);
                 status.setText(event.getProgress() == null ? "Mission — " + state
                         : "Mission — " + state + ", waypoint "
                         + (event.getProgress().targetWaypointIndex + 1) + ".");
@@ -191,13 +194,14 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
         ((Button) findViewById(R.id.mission_mvp_download)).setOnClickListener(view -> download());
         ((Button) findViewById(R.id.mission_mvp_boundaries)).setOnClickListener(view -> openBoundaryProfiles());
         ((Button) findViewById(R.id.mission_mvp_start)).setOnClickListener(view -> start());
-        ((Button) findViewById(R.id.mission_mvp_pause)).setOnClickListener(view -> operator.pauseMission(result("Pause")));
-        ((Button) findViewById(R.id.mission_mvp_cancel)).setOnClickListener(view -> operator.stopMission(result("Cancel")));
+        ((Button) findViewById(R.id.mission_mvp_pause)).setOnClickListener(view -> { SessionTimelineStore.operator("MISSION_PAUSE", "Pause pressed"); operator.pauseMission(result("Pause")); });
+        ((Button) findViewById(R.id.mission_mvp_cancel)).setOnClickListener(view -> { SessionTimelineStore.operator("MISSION_CANCEL", "Cancel pressed"); operator.stopMission(result("Cancel")); });
         refreshRoute();
         attachHub();
     }
 
     private void load() {
+        SessionTimelineStore.operator("MISSION_LOAD", "Load pressed");
         try {
             MissionDraft draft = currentDraft();
             String preflightError = firstPreflightError(draft);
@@ -221,6 +225,7 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
     }
 
     private void upload() {
+        SessionTimelineStore.operator("MISSION_UPLOAD", "Upload pressed");
         MissionDraft draft = requireCurrentLoadedDraft();
         if (draft == null) return;
         String preflightError = firstPreflightError(draft);
@@ -234,6 +239,7 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
     }
 
     private void download() {
+        SessionTimelineStore.operator("MISSION_DOWNLOAD", "Download pressed");
         WaypointMissionState currentState = operator.getCurrentState();
         if (!WaypointMissionState.EXECUTING.equals(currentState)
                 && !WaypointMissionState.EXECUTION_PAUSED.equals(currentState)) {
@@ -250,6 +256,7 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
     }
 
     private void start() {
+        SessionTimelineStore.operator("MISSION_START", "Start pressed");
         if (rthActive) { status.setText("RTH is active; Start is unavailable."); return; }
         MissionDraft draft = requireCurrentLoadedDraft();
         if (draft == null || !uploaded) {

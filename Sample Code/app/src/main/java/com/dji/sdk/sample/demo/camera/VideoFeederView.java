@@ -78,7 +78,6 @@ public class VideoFeederView extends LinearLayout
     private TextView fpvVideoFeedTitle;
     private VideoFeedView primaryVideoFeed;
     private VideoFeedView fpvVideoFeed;
-    private VideoFeeder.PhysicalSourceListener sourceListener;
     private AirLinkKey extEnabledKey;
     private AirLinkKey lbBandwidthKey;
     private AirLinkKey hdmiBandwidthKey;
@@ -291,19 +290,6 @@ public class VideoFeederView extends LinearLayout
     }
 
     private void setUpListeners() {
-        sourceListener = new VideoFeeder.PhysicalSourceListener() {
-            @Override
-            public void onChange(VideoFeeder.VideoFeed videoFeed, PhysicalSource newPhysicalSource) {
-                if (videoFeed == VideoFeeder.getInstance().getPrimaryVideoFeed()) {
-                    String newText = "Primary Source: " + newPhysicalSource.toString();
-                    ToastUtils.setResultToText(primaryVideoFeedTitle,newText);
-                }
-                if (videoFeed == VideoFeeder.getInstance().getSecondaryVideoFeed()) {
-                    ToastUtils.setResultToText(fpvVideoFeedTitle,"Secondary Source: " + newPhysicalSource.toString());
-                }
-            }
-        };
-
         setVideoFeederListeners(true);
     }
 
@@ -334,15 +320,13 @@ public class VideoFeederView extends LinearLayout
                                                                           .name();
                     ToastUtils.setResultToText(fpvVideoFeedTitle, newTextFpv);
                 }
-                VideoFeeder.getInstance().addPhysicalSourceListener(sourceListener);
+                primaryVideoFeed.setSourceListener(source -> ToastUtils.setResultToText(
+                        primaryVideoFeedTitle, "Primary Source: " + source));
+                fpvVideoFeed.setSourceListener(source -> ToastUtils.setResultToText(
+                        fpvVideoFeedTitle, "Secondary Source: " + source));
             } else {
-                VideoFeeder.getInstance().removePhysicalSourceListener(sourceListener);
-                VideoFeeder.getInstance().getPrimaryVideoFeed().removeVideoDataListener(primaryVideoDataListener);
-                if (Helper.isMultiStreamPlatform()) {
-                    VideoFeeder.getInstance()
-                               .getSecondaryVideoFeed()
-                               .removeVideoDataListener(secondaryVideoDataListener);
-                }
+                primaryVideoFeed.setSourceListener(null);
+                fpvVideoFeed.setSourceListener(null);
             }
         }
     }

@@ -2,7 +2,8 @@ package com.dji.sdk.sample.demo.battery;
 
 import android.content.Context;
 import com.dji.sdk.sample.R;
-import com.dji.sdk.sample.internal.controller.DJISampleApplication;
+import com.dji.sdk.sample.djihub.CallbackMulticaster;
+import com.dji.sdk.sample.djihub.DjiDataHub;
 import com.dji.sdk.sample.internal.view.BasePushDataView;
 import dji.common.battery.BatteryState;
 
@@ -10,6 +11,7 @@ import dji.common.battery.BatteryState;
  * Class for getting the battery information.
  */
 public class PushBatteryDataView extends BasePushDataView {
+    private CallbackMulticaster.Subscription hubSubscription;
     public PushBatteryDataView(Context context) {
         super(context);
     }
@@ -19,9 +21,8 @@ public class PushBatteryDataView extends BasePushDataView {
         super.onAttachedToWindow();
 
         try {
-            DJISampleApplication.getProductInstance().getBattery().setStateCallback(new BatteryState.Callback() {
-                @Override
-                public void onUpdate(BatteryState djiBatteryState) {
+            hubSubscription = DjiDataHub.getInstance().addListener(new DjiDataHub.Listener() {
+                @Override public void onBatteryState(int index, BatteryState djiBatteryState) {
                     stringBuffer.delete(0, stringBuffer.length());
 
                     stringBuffer.append("BatteryEnergyRemainingPercent: ").
@@ -44,11 +45,8 @@ public class PushBatteryDataView extends BasePushDataView {
     protected void onDetachedFromWindow() {
         super.onDetachedFromWindow();
 
-        try {
-            DJISampleApplication.getProductInstance().getBattery().setStateCallback(null);
-        } catch (Exception ignored) {
-
-        }
+        if (hubSubscription != null) hubSubscription.close();
+        hubSubscription = null;
     }
 
     @Override

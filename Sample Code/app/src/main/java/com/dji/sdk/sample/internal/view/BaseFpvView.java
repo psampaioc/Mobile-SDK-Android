@@ -8,15 +8,16 @@ import android.view.LayoutInflater;
 import android.view.TextureView;
 import android.widget.FrameLayout;
 import com.dji.sdk.sample.R;
+import com.dji.sdk.sample.djihub.CallbackMulticaster;
+import com.dji.sdk.sample.djihub.DjiDataHub;
 import dji.midware.usb.P3.UsbAccessoryService;
-import dji.sdk.camera.VideoFeeder;
 import dji.sdk.codec.DJICodecManager;
 
 /**
  * This class is designed for showing the fpv video feed from the camera or Lightbridge 2.
  */
 public class BaseFpvView extends FrameLayout implements TextureView.SurfaceTextureListener{
-    private VideoFeeder.VideoDataListener videoDataListener = null;
+    private CallbackMulticaster.Subscription hubSubscription;
     private DJICodecManager codecManager = null;
 
     public BaseFpvView(Context context, AttributeSet attrs) {
@@ -35,26 +36,27 @@ public class BaseFpvView extends FrameLayout implements TextureView.SurfaceTextu
         if (null != mVideoSurface) {
             mVideoSurface.setSurfaceTextureListener(this);
 
-            videoDataListener = new VideoFeeder.VideoDataListener() {
-                @Override
-                public void onReceive(byte[] bytes, int size) {
-                    if (null != codecManager) {
-                        codecManager.sendDataToDecoder(bytes,
-                                                       size,
-                                                       UsbAccessoryService.VideoStreamSource.Fpv.getIndex());
-                    }
-                }
-            };
         }
-
-        initSDKCallback();
     }
 
-    private void initSDKCallback() {
-        try {
-            VideoFeeder.getInstance().getSecondaryVideoFeed().addVideoDataListener(videoDataListener);
-        } catch (Exception ignored) {
-        }
+    @Override protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        if (hubSubscription != null) return;
+        hubSubscription = DjiDataHub.getInstance().addListener(new DjiDataHub.Listener() {
+            @Override public void onVideo(DjiDataHub.Feed feed, byte[] bytes, int size,
+                    String source) {
+                if (feed == DjiDataHub.Feed.SECONDARY && codecManager != null) {
+                    codecManager.sendDataToDecoder(bytes, size,
+                            UsbAccessoryService.VideoStreamSource.Fpv.getIndex());
+                }
+            }
+        });
+    }
+
+    @Override protected void onDetachedFromWindow() {
+        if (hubSubscription != null) hubSubscription.close();
+        hubSubscription = null;
+        super.onDetachedFromWindow();
     }
 
     @Override

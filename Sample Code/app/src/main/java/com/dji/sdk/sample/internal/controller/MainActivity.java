@@ -28,6 +28,7 @@ import com.dji.sdk.sample.internal.model.ViewWrapper;
 import com.dji.sdk.sample.internal.utils.ToastUtils;
 import com.dji.sdk.sample.internal.view.DemoListView;
 import com.dji.sdk.sample.internal.view.PresentableView;
+import com.dji.sdk.sample.operate.OperateMvpView;
 import com.squareup.otto.Subscribe;
 
 import java.util.Stack;
@@ -49,6 +50,10 @@ public class MainActivity extends AppCompatActivity {
     private SearchView searchView;
     private MenuItem searchViewItem;
     private MenuItem hintItem;
+    private static volatile boolean appInForeground;
+
+    /** Used only to respect Android's foreground-service launch restriction. */
+    public static boolean isAppInForeground() { return appInForeground; }
 
     //region Life-cycle
     @Override
@@ -65,6 +70,16 @@ public class MainActivity extends AppCompatActivity {
     protected void onDestroy() {
         DJISampleApplication.getEventBus().unregister(this);
         super.onDestroy();
+    }
+
+    @Override protected void onResume() {
+        super.onResume();
+        appInForeground = true;
+    }
+
+    @Override protected void onPause() {
+        appInForeground = false;
+        super.onPause();
     }
 
     @Override
@@ -230,6 +245,17 @@ public class MainActivity extends AppCompatActivity {
 
         refreshTitle();
         refreshOptionsMenu();
+        if (showView instanceof OperateMvpView) {
+            getSupportActionBar().hide();
+            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
+        }
+    }
+
+    /** Opens the upstream sample catalog outside the persistent Operate shell. */
+    public void showSampleDemos() {
+        getSupportActionBar().show();
+        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
+        pushView(new ViewWrapper(new DemoListView(this), R.string.activity_component_list));
     }
 
     private void refreshOptionsMenu() {

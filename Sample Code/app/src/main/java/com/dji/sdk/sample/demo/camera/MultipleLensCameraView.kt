@@ -26,14 +26,12 @@ import dji.keysdk.callback.ActionCallback
 import dji.keysdk.callback.GetCallback
 import dji.keysdk.callback.SetCallback
 import dji.sdk.camera.VideoFeeder
-import dji.sdk.camera.VideoFeeder.PhysicalSourceListener
 import dji.sdk.sdkmanager.DJISDKManager
 
 class MultipleLensCameraView(context: Context) : LinearLayout(context), View.OnClickListener, PresentableView {
 
     private lateinit var primaryVideoFeedTitle: TextView
     private lateinit var primaryVideoFeed: VideoFeedView
-    private lateinit var sourceListener: PhysicalSourceListener
     private lateinit var videoStreamSourceTitle: TextView
     private lateinit var videoStreamSourceCallback: CameraVideoStreamSource.Callback
     private lateinit var laserMeasureInformationTitle: TextView
@@ -72,17 +70,12 @@ class MultipleLensCameraView(context: Context) : LinearLayout(context), View.OnC
             }
         }
 
-        sourceListener = PhysicalSourceListener { videoFeed, newPhysicalSource ->
-            if (videoFeed === VideoFeeder.getInstance().primaryVideoFeed) {
-                val newText = "Primary Source: $newPhysicalSource"
-                ToastUtils.setResultToText(primaryVideoFeedTitle, newText)
-            }
-        }
-
         primaryVideoFeed.registerLiveVideo(VideoFeeder.getInstance().primaryVideoFeed, true)
+        primaryVideoFeed.setSourceListener { source ->
+            ToastUtils.setResultToText(primaryVideoFeedTitle, "Primary Source: $source")
+        }
         val newText = "Primary Source: ${VideoFeeder.getInstance().primaryVideoFeed.videoSource.name}"
         ToastUtils.setResultToText(primaryVideoFeedTitle, newText)
-        VideoFeeder.getInstance().addPhysicalSourceListener(sourceListener)
 
         videoStreamSourceCallback = CameraVideoStreamSource.Callback {
             val videoStreamsSourceText = "Video Stream Source: $it"
@@ -244,7 +237,7 @@ class MultipleLensCameraView(context: Context) : LinearLayout(context), View.OnC
     }
 
     private fun tearDownListeners() {
-        VideoFeeder.getInstance().removePhysicalSourceListener(sourceListener)
+        primaryVideoFeed.setSourceListener(null)
         DJISampleApplication.getProductInstance()
                 .cameras?.get(0)?.setCameraVideoStreamSourceCallback(null)
         DJISampleApplication.getProductInstance()

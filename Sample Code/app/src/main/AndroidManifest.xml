@@ -17,6 +17,8 @@
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-feature
         android:name="android.hardware.usb.host"
         android:required="false"/>
@@ -46,7 +48,7 @@
         <!-- personal key -->
         <meta-data
             android:name="com.dji.sdk.API_KEY"
-            android:value="Please enter your App key here."/>
+            android:value="${djiApiKey}"/>
         <!-- Required for receiving accessory attachment events.
             This is necessary for product when connecting over USB. -->
 
@@ -86,6 +88,10 @@
             android:screenOrientation="landscape"/>
 
         <activity android:name=".demo.utmiss.UTMISSActivity" />
+
+        <service
+            android:name=".transport.TransportForegroundService"
+            android:exported="false" />
     </application>
 
 </manifest>

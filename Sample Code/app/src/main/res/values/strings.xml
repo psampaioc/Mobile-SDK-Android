@@ -1,4 +1,26 @@
 <resources>
+    <string name="transport_group">Deployment Transport</string>
+    <string name="transport_title">Video + Telemetry to Edge</string>
+    <string name="transport_explanation">Passive bench transport. Start is an explicit local action. It reads DJI encoded video and state callbacks only; it contains no flight, mission, virtual-stick, or gimbal command path.</string>
+    <string name="transport_edge_host_hint">Edge machine IPv4 address (for example 192.168.1.20)</string>
+    <string name="transport_start">Start transport</string>
+    <string name="transport_stop">Stop transport</string>
+    <string name="transport_stopped_description">STOPPED\nEnter the edge machine address, start the edge receiver, then press Start transport.</string>
+    <string name="transport_aircraft_required">Cannot start: a connected DJI aircraft is required.</string>
+    <string name="transport_start_failed">Start failed: %1$s</string>
+    <string name="operate_menu_operate">Operate</string>
+    <string name="operate_menu_mission">Mission</string>
+    <string name="operate_menu_transport">Transport configuration</string>
+    <string name="transport_configuration_required">Enter the edge machine IP address.</string>
+    <string name="transport_configuration_saved">Edge IP saved.</string>
+    <string name="transport_switch_description">Start or stop the passive edge transport</string>
+    <string name="transport_add_ip">ADD</string>
+    <string name="transport_remove_ip">REMOVE</string>
+    <string name="transport_use_ip">USE</string>
+    <string name="transport_saved_ips">Saved edge IPs (tap to select):</string>
+    <string name="transport_select_ip">Select at least one saved IP.</string>
+    <string name="transport_select_one_ip">Select exactly one IP to use.</string>
+    <string name="transport_ip_in_use">IP in use: %1$s</string>
     <string name="sample_app_name">DJI SDK Sample</string>
     <string name="action_settings">Settings</string>
 
@@ -363,5 +385,10 @@
     <string name="split_screen_display">Split Screen Display</string>
 
     <string name="uas_view">UAS</string>
+
+    <string name="transport_notification_channel">Edge transport</string>
+    <string name="transport_notification_channel_description">Keeps the selected Edge video and telemetry transport active.</string>
+    <string name="transport_notification_title">Edge transport active</string>
+    <string name="transport_notification_text">Video and telemetry continue while the app is in the background.</string>
 
 </resources>

@@ -1,0 +1,48 @@
+.gradle/
+.gradle-user-home/
+.android-sdk/
+build/
+app/build/
+/app/
+Sample Code/.gradle/
+Sample Code/app/build/
+local.properties
+**/local.properties
+AGENTS.md
+**/AGENTS.md
+*.env
+*.env.*
+*.keystore
+*.jks
+*.p12
+*.pem
+*.key
+*.iml
+.idea/
+captures/
+externalNativeBuild/
+cmake-build-*/
+.codex/
+.AI/
+graphify-out/
+.runtime/
+*.apk
+*.aab
+*.apks
+
+# Python edge tooling
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+
+# macOS metadata
+.DS_Store
+**/.DS_Store
+._*
+
+# Local diagnostics and generated output
+diagnostics/*.ndjson
+diagnostics/*.log
+*.ndjson
+*.log

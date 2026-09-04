@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="horizontal">
+
+    <LinearLayout android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:orientation="vertical">
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="LAT" android:textColor="#667B87" android:textSize="10sp" />
+        <TextView android:id="@+id/operate_mvp_latitude" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:text="--" android:textColor="#162A36" android:textSize="12sp" />
+    </LinearLayout>
+    <View android:layout_width="1dp" android:layout_height="match_parent" android:background="@drawable/operate_mvp_telemetry_divider" />
+    <LinearLayout android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_marginLeft="16dp" android:orientation="vertical">
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="LON" android:textColor="#667B87" android:textSize="10sp" />
+        <TextView android:id="@+id/operate_mvp_longitude" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:text="--" android:textColor="#162A36" android:textSize="12sp" />
+    </LinearLayout>
+    <View android:layout_width="1dp" android:layout_height="match_parent" android:background="@drawable/operate_mvp_telemetry_divider" />
+    <LinearLayout android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_marginLeft="16dp" android:orientation="vertical">
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="ALT" android:textColor="#667B87" android:textSize="10sp" />
+        <TextView android:id="@+id/operate_mvp_altitude" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:text="--" android:textColor="#162A36" android:textSize="12sp" />
+    </LinearLayout>
+    <View android:layout_width="1dp" android:layout_height="match_parent" android:background="@drawable/operate_mvp_telemetry_divider" />
+    <LinearLayout android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_marginLeft="16dp" android:orientation="vertical">
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="HDG" android:textColor="#667B87" android:textSize="10sp" />
+        <TextView android:id="@+id/operate_mvp_heading" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:text="--" android:textColor="#162A36" android:textSize="12sp" />
+    </LinearLayout>
+    <View android:layout_width="1dp" android:layout_height="match_parent" android:background="@drawable/operate_mvp_telemetry_divider" />
+    <LinearLayout android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_marginLeft="16dp" android:orientation="vertical">
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="VEL" android:textColor="#667B87" android:textSize="10sp" />
+        <TextView android:id="@+id/operate_mvp_velocity" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:text="--" android:textColor="#162A36" android:textSize="12sp" />
+    </LinearLayout>
+    <View android:layout_width="1dp" android:layout_height="match_parent" android:background="@drawable/operate_mvp_telemetry_divider" />
+    <LinearLayout
+        android:id="@+id/operate_mvp_gimbal_cell"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1.55"
+        android:layout_marginLeft="16dp"
+        android:clickable="true"
+        android:foreground="?attr/selectableItemBackground"
+        android:orientation="vertical">
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="GIMBAL   ▴" android:textColor="#667B87" android:textSize="10sp" />
+        <TextView android:id="@+id/operate_mvp_gimbal_summary" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:text="PITCH  --" android:textColor="#162A36" android:textSize="12sp" />
+    </LinearLayout>
+</LinearLayout>

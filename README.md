@@ -1,154 +1,63 @@
-# [MSDK V5 Released](https://github.com/dji-sdk/Mobile-SDK-Android-V5)
+# Matrice M210 RTK V2 operator app
 
-MSDK V5 Supported Product:
-* [DJI Mavic 3 Enterprise Series](https://www.dji.com/cn/mavic-3-enterprise)
-* [M30 Series](https://www.dji.com/matrice-30?site=brandsite&from=nav)
-* [M300 RTK](https://www.dji.com/matrice-300?site=brandsite&from=nav)
+Android application for a DJI Matrice 210 RTK V2 with Cendence and a Galaxy Tab S9, based on DJI Mobile SDK Android V4.18. It provides the validated DJI connection path, an operator-first video screen, local mission drafting, and an opt-in transport path to the Ubuntu edge computer.
 
-# DJI Mobile SDK V4 for Android Latest Version 4.18
+```text
+M210 RTK V2 -> OcuSync -> Cendence -> USB -> Galaxy Tab S9 -> private LAN -> Ubuntu edge
+```
 
-## What Is This?
+## What is in scope
 
-The DJI Mobile SDK enables you to automate your DJI Product. You can control flight, and many subsystems of the product including the camera and gimbal. Using the Mobile SDK, create a customized mobile app to unlock the full potential of your DJI aerial platform.
+- Primary and FPV video display, source state, no-signal state, and a movable/collapsible FPV monitor.
+- Aircraft, RTK/GPS, gimbal, Cendence, OcuSync, and battery status collected once through `DjiDataHub` and safely shared with Operate, Mission, demos, and transport.
+- Local WGS84 waypoint drafts, a MapLibre planner, numbered route points, saved-mission library, and explicit `Load`, `Upload`, `Start`, `Pause`, and `Cancel` actions.
+- Explicit DJI Home Point selection from a waypoint. The operator must confirm the dialog; a successful DJI API response updates Mission immediately and does not require saving or uploading a draft.
+- Bounded H.264/RTP and telemetry/NDJSON transport, active whenever an approved edge endpoint is marked **IN USE**; it persists across app screens and while the tablet is backgrounded.
 
-## Integration
+The app never arms, takes off, lands, changes flight mode, moves the gimbal, starts Return-to-Home, or starts a mission automatically. Every DJI command remains a visible operator action. Cendence controls and DJI landing protection remain authoritative.
 
-Declare dependency via Maven:
+## Build and install
 
-~~~xml
-<dependency>
-    <groupId>com.dji</groupId>
-    <artifactId>dji-sdk</artifactId>
-    <version>4.18</version>
-</dependency>
+The legacy DJI V4.18 stack requires Java 11. The project defaults to the local Android SDK in `.android-sdk/`; set `ANDROID_SDK_ROOT` if it lives elsewhere.
 
-<dependency>
-    <groupId>com.dji</groupId>
-    <artifactId>dji-sdk-provided</artifactId>
-    <version>4.18</version>
-</dependency>
-~~~
+```bash
+scripts/test_android.sh
+scripts/build_android.sh :app:assembleDebug
+scripts/verify_apk.sh
+adb -s TABLET_SERIAL install -r 'Sample Code/app/build/outputs/apk/debug/app-debug.apk'
+```
 
-or Gradle:
+On a freshly launched app, tap **Register APP** before **Open** becomes available. This only performs SDK registration/navigation; it authorizes no aircraft command. The DJI App Key remains local in `DJI_API_KEY` or ignored `Sample Code/local.properties`.
 
-~~~groovy
-compile 'com.dji:dji-sdk:4.18'
-provided 'com.dji:dji-sdk-provided:4.18'
-~~~
+## Operator guide
 
-For further detail on how to integrate the DJI Android SDK into your Android Studio project, please check the [Integrate SDK into Application](http://developer.dji.com/mobile-sdk/documentation/application-development-workflow/workflow-integrate.html#import-maven-dependency) tutorial.
+1. Connect the Cendence to the Tab S9 over USB and open the app after registration.
+2. Use **Operate** for video and passive status. `SOURCES` changes the visible camera route; status chevrons expand read-only group detail.
+3. In **Mission**, center the map on the tablet/aircraft, choose **ADD WAYPOINT**, then tap the map. Each numbered marker is the actual WGS84 coordinate stored in route order.
+4. Tap a waypoint to delete it or choose **SET DJI HOME**. Confirming this command changes the real DJI Home Point immediately; it is separate from saving a mission.
+5. Save a draft locally, reopen it with **SAVED MISSIONS**, edit it if needed, then use the separate `LOAD`, `UPLOAD`, and `START` actions only after the preflight state is ready.
+6. In **Transport**, enter the approved edge host and mark it **IN USE**. Transport stays active until that endpoint is removed or replaced; stop it explicitly before changing the network destination.
 
-## Running the SDK Sample Code
+## Current evidence and limits
 
-Developers can [run the sample application](https://developer.dji.com/mobile-sdk/documentation/quick-start/index.html#android-sample-app) to immediately run code and see how the DJI Mobile SDK can be used.
+The app builds and installs on the Tab S9; DJI registration, Cendence/M210 connection, video decoding, Operate, Mission map rendering, and manual UI navigation have been exercised. Primary video reached the Ubuntu transport bench. The secondary/FPV byte callback is present but still needs a physical end-to-end RTP validation after parser changes. RTK FIX, OcuSync quality callback behavior, DJI Home confirmation, mission load/upload, mission execution, Return-to-Home, and landing behavior remain hardware tests, not claims from a successful build.
 
-One of DJI's aircraft or handheld cameras will be required to run the sample application.
+## Implementation history
 
-## Development Workflow 
+- Established the V4.18/Java 11 Android 16 compatibility harness and the Tab S9/Cendence connection path.
+- Reworked the sample into Operate, Mission, Transport, settings, and separate Sample/Demos navigation.
+- Centralized shared DJI video, flight, RTK, gimbal, remote-controller, battery, and OcuSync callbacks in `DjiDataHub` so UI and transport do not compete for setter-based callbacks.
+- Added compact Operate telemetry/status, independent video feed health, and the floating FPV behavior.
+- Added bounded transport parsing, RTP packetization, telemetry health, and local diagnostics; fixed a health-datagram overflow crash.
+- Added the map-first Mission draft model, local persistence/library, Home Point confirmation, mission controls, preflight gates, and numbered waypoint rendering.
 
-From registering as a developer, to deploying an application, the following will take you through the full Mobile SDK Application development process:
+## Repository map
 
-- [Prerequisites](https://developer.dji.com/mobile-sdk/documentation/application-development-workflow/workflow-prerequisits.html)
-- [Register as DJI Developer & Download SDK](https://developer.dji.com/mobile-sdk/documentation/application-development-workflow/workflow-register.html)
-- [Integrate SDK into Application](https://developer.dji.com/mobile-sdk/documentation/application-development-workflow/workflow-integrate.html)
-- [Run Application](https://developer.dji.com/mobile-sdk/documentation/application-development-workflow/workflow-run.html)
-- [Testing, Profiling & Debugging](https://developer.dji.com/mobile-sdk/documentation/application-development-workflow/workflow-testing.html)
-- [Deploy](https://developer.dji.com/mobile-sdk/documentation/application-development-workflow/workflow-deploy.html)
+- `Sample Code/` — active DJI V4.18 application and all production source/tests.
+- `scripts/` — repeatable Java/SDK, test, build, ownership, and APK verification commands.
+- `.android-sdk/` — local Android SDK used by the scripts; it is intentionally untracked.
+- [`docs/PLAN.md`](docs/PLAN.md) — current design decisions, work plan, acceptance checks, and unverified hardware gates.
 
-## Sample Projects & Tutorials
+## Provenance
 
-Several Android tutorials are provided as examples on how to use different features of the Mobile SDK and debug tools includes:
-
-- [Application Activation and Aircraft Binding](http://developer.dji.com/mobile-sdk/documentation/android-tutorials/ActivationAndBinding.html)
-- [Getting Started with UX SDK](http://developer.dji.com/mobile-sdk/documentation/android-tutorials/UXSDKDemo.html)
-- [Camera Application](https://developer.dji.com/mobile-sdk/documentation/android-tutorials/FPVDemo.html)
-- [MapView and Waypoint Application (GaodeMap)](https://developer.dji.com/mobile-sdk/documentation/android-tutorials/GSDemo-Gaode-Map.html)
-- [MapView and Waypoint Application (GoogleMap)](https://developer.dji.com/mobile-sdk/documentation/android-tutorials/GSDemo-Google-Map.html)
-- [TapFly and ActiveTrack Application](https://developer.dji.com/mobile-sdk/documentation/android-tutorials/P4MissionsDemo.html)
-- [Simulator Application](http://developer.dji.com/mobile-sdk/documentation/android-tutorials/SimulatorDemo.html)
-- [GEO System Application](http://developer.dji.com/mobile-sdk/documentation/android-tutorials/GEODemo.html)
-
-## Learn More about DJI Products and the Mobile SDK
-
-Please visit [DJI Mobile SDK Documentation](https://developer.dji.com/mobile-sdk/documentation/introduction/index.html) for more details.
-
-## DJI Mobile UX SDK
-
-DJI Mobile UX SDK is a suite of product agnostic UI objects that fast tracks the development of iOS applications using the DJI Mobile SDK. For more details, please check [here](https://github.com/dji-sdk/Mobile-UXSDK-Android).
-
-## Device Health Information Json File
-
-You can find the **hms.json** and **`hms_match_sdkerror.json`** files in this repo's root folder.
-
-It contains error code and detailed description for device components. Only supported by some components of Matrice 300 RTK and Zenmuse H20 series.
-
-It is recommended to use device health information to replace old diagnostics for flight controller and RTK. There will be a few duplicated component error for gimbal, battery, perception module on Matrice 300 RTK.
-
-Please refer to the table below for duplicated error:
-
-| DJIDiagnosticsError | Enum Value | AlarmId |
-|:------------- |:---------------:| -------------:|
-| `BATTERY_DISCHARGE_OVER_CURRENT`  | 3001 | 0x110B0001|
-| `BATTERY_DISCHARGE_OVER_HEAT` | 3002  | 0x110B0002 |
-| `BATTERY_LOW_TEMPERATURE` | 3003  | 0x110B0003 |
-| `BATTERY_CELL_BROKEN` | 3004 | 0x110B0006 |
-| `GIMBAL_CONNECT_TO_FC_ERROR` | 2005 | 0x1D030001 |
-| `GIMBAL_GYROSCOPE_ERROR` | 2001 | 0x1D040002 |
-| `GIMBAL_PITCH_ERROR` | 2002 | 0x1D040004 |
-| `GIMBAL_ROLL_ERROR` | 2003 | 0x1D040003 |
-| `GIMBAL_YAW_ERROR` | 2004 | 0x1D040005 |
-
-
-## ProGuard
-
-If you're planning on optimizing your app with [ProGuard](https://developer.android.com/studio/build/shrink-code.html), you can add the following rules to your app's `proguard.cfg` file:
-
-- For **AAR** file, please use the following rule:
-
-~~~
-"-libraryjars ./PATH_TO_THIS_FILE/dji_android_sdk.aar"
-~~~
-
-- For **API Library** folder, please use the rules in [proguard-project](<https://github.com/dji-sdk/Mobile-SDK-Android/blob/master/Sample Code/app/proguard-rules.pro>) file. 
-
-> **Note**: There are two types of DJI Android SDK: **AAR** and **API Library folder**, you can download them from DJI Developer Website: <http://developer.dji.com/mobile-sdk/downloads/>.
-
-## SDK Keys
-
-SDK Keys can be used as an alternative interface to access the product.
-
-A detailed introduction for SDK Keys is [here](./docs/README-KeyedInterface.md).
-
-## Missions Refactor
-
-Missions are an important part of the SDK as they allow developers to automate DJI's products using a simple, high level interface. In 4.0, missions are being refactored to be more robust and easier to manage.
-
-A detailed introduction for missions is [here](./docs/README-Mission.md).
-
-## Android Bridge App
-
-Please check this [link](https://github.com/dji-sdk/Android-Bridge-App) to download the apk of the Android Bridge App apk file.
-
-## SDK API Reference
-
-[**Android SDK API Documentation**](http://developer.dji.com/api-reference/android-api/index.html)
-
-## License
-
-The DJI Android SDK is dynamically linked with unmodified libraries of <a href=http://ffmpeg.org>FFmpeg</a> licensed under the <a href=https://www.gnu.org/licenses/lgpl-2.1.html.en>LGPLv2.1</a>. The source code of these FFmpeg libraries, the compilation instructions, and the LGPL v2.1 license are provided in [Github](https://github.com/dji-sdk/FFmpeg).
-
-The DJI Android SDK is dynamically linked with unmodified libraries of <a href=https://mvnrepository.com/artifact/com.vividsolutions/jts/1.8>JTS Topology Suite</a> licensed under the <a href=https://www.gnu.org/licenses/lgpl-2.1.html.en>LGPLv2.1</a>.
-
-## Support
-
-You can get support from DJI with the following methods:
-
-- Post questions in DJI Developer Forums:
-[**Chinese Forum**](https://djisdksupport.zendesk.com/hc/zh-cn/community/topics)
-, [**English Forum**](https://djisdksupport.zendesk.com/hc/en-us/community/topics)
-
-## Join Us
-
-DJI is looking for all kinds of Software Engineers to continue building the Future of Possible. Available positions in Shenzhen, China and around the world. If you are interested, please send your resume to <software-sz@dji.com>. For more details, and list of all our global offices, please check <https://we.dji.com/jobs_en.html>.
-
-DJI 招软件工程师啦，based在深圳，如果你想和我们一起把DJI产品做得更好，请发送简历到 <software-sz@dji.com>.  或者在这里提交您的简历：https://we.dji.com/zh-CN/position/detail?positionId=1382258951346253824 更多岗位详情请浏览 <https://we.dji.com/zh-CN/social>.
+This fork starts from DJI `Mobile-SDK-Android` V4.18, pinned at commit `37afa622a1e95f179e2d5431f0afe4203ee5ca88`. DJI SDK binaries, DJI sample code, and bundled third-party libraries have distinct licensing terms; see [LICENSE.txt](LICENSE.txt). V4.18 is retained because it is the compatible legacy SDK family for the M210 RTK V2.

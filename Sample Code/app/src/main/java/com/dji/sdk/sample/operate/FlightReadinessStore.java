@@ -45,6 +45,10 @@ public final class FlightReadinessStore {
                 boolean connected = snapshot.aircraftConnected;
                 if (connected != lastAircraftConnected) {
                     session.beginNewAircraftSession(SystemClock.elapsedRealtime());
+                    if (connected) {
+                        SessionTimelineStore.android("AIRCRAFT_SESSION",
+                                "New aircraft session observed; prior local evidence retained");
+                    }
                     SessionTimelineStore.android("AIRCRAFT_LINK", connected
                             ? "Aircraft connection observed" : "Aircraft disconnection observed");
                     publishLatestEvent();

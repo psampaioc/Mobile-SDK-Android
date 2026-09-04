@@ -18,7 +18,10 @@ public final class MissionPlannerUnitTestSuite {
         distinguishesLocalAndRemoteMissionEvidence();
         calculatesRouteStatisticsFromLocalDraft();
         detectsCircleAndPolygonBoundaryWarnings();
+        ignoresDisjointCollinearBoundarySegments();
         rejectsInvalidPlanningBoundaryGeometry();
+        preservesBoundariesDuringProfileEdits();
+        rejectsDegenerateBoundaryPolygons();
         boundsSessionTimelineWithoutBlockingProducers();
         detectsLoadedDraftChanges();
         rejectsUnsafeConnectedState();
@@ -149,6 +152,17 @@ public final class MissionPlannerUnitTestSuite {
                 "route segment crossing an exclusion polygon must warn");
     }
 
+    private static void ignoresDisjointCollinearBoundarySegments() {
+        PlanningBoundary exclusion = PlanningBoundary.exclusionPolygon("No go", Arrays.asList(
+                new PlanningBoundary.Point(-0.001d, -0.001d), new PlanningBoundary.Point(-0.001d, 0.001d),
+                new PlanningBoundary.Point(0.001d, 0.001d), new PlanningBoundary.Point(0.001d, -0.001d)));
+        MissionDraft disjoint = new MissionDraft("Disjoint", 30f, 3f, MissionFinishAction.HOVER_AT_FINAL,
+                Arrays.asList(new MissionWaypoint(0.001d, 0.002d, null), new MissionWaypoint(0.001d, 0.003d, null)),
+                null, null);
+        BoundaryEvaluator.Result result = BoundaryEvaluator.evaluate(disjoint, Arrays.asList(exclusion));
+        require(result.getWarningCount() == 0, "a disjoint collinear segment must not warn");
+    }
+
     private static void boundsSessionTimelineWithoutBlockingProducers() {
         SessionTimeline timeline = new SessionTimeline(2);
         timeline.record(1L, SessionTimeline.TimeSource.OPERATOR_ACTION, "LOAD", "Pressed Load");
@@ -170,6 +184,54 @@ public final class MissionPlannerUnitTestSuite {
         try { PlanningBoundary.exclusionCircle("Bad", 91d, 0d, 1d); }
         catch (IllegalArgumentException expected) { coordinateRejected = true; }
         require(coordinateRejected, "local boundary coordinates must be valid WGS84 coordinates");
+    }
+
+    private static void preservesBoundariesDuringProfileEdits() {
+        PlanningBoundary first = PlanningBoundary.exclusionCircle("First", 0d, 0d, 10d);
+        PlanningBoundary second = PlanningBoundary.exclusionCircle("Second", 0d, 0.001d, 10d);
+        PlanningBoundary third = PlanningBoundary.exclusionCircle("Third", 0d, 0.002d, 10d);
+        PlanningBoundary replacement = PlanningBoundary.exclusionCircle("Replacement", 0d, 0.003d, 10d);
+        PlanningBoundaryProfile profile = new PlanningBoundaryProfile("Profile", Arrays.asList(first, second));
+        PlanningBoundaryProfile appended = profile.withBoundaryAppended(third);
+        require(appended.getBoundaries().size() == 3, "append must retain existing boundaries");
+        require(appended.getBoundaries().get(0) == first && appended.getBoundaries().get(1) == second,
+                "append must preserve previous boundary order");
+        PlanningBoundaryProfile replaced = appended.withBoundaryReplaced(1, replacement);
+        require(replaced.getBoundaries().get(0) == first && replaced.getBoundaries().get(1) == replacement
+                        && replaced.getBoundaries().get(2) == third,
+                "replace must change only the selected boundary");
+        PlanningBoundaryProfile deleted = replaced.withBoundaryDeleted(1);
+        require(deleted.getBoundaries().size() == 2 && deleted.getBoundaries().get(0) == first
+                        && deleted.getBoundaries().get(1) == third,
+                "delete must retain unrelated boundaries");
+        boolean unavailableIndexRejected = false;
+        try { deleted.withBoundaryDeleted(2); }
+        catch (IllegalArgumentException expected) { unavailableIndexRejected = true; }
+        require(unavailableIndexRejected, "an unavailable boundary index must be rejected");
+    }
+
+    private static void rejectsDegenerateBoundaryPolygons() {
+        requireBoundaryRejected(Arrays.asList(new PlanningBoundary.Point(0d, 0d),
+                new PlanningBoundary.Point(0d, 0d), new PlanningBoundary.Point(0.001d, 0.001d)),
+                "duplicate polygon vertices must be rejected");
+        requireBoundaryRejected(Arrays.asList(new PlanningBoundary.Point(0d, 0d),
+                new PlanningBoundary.Point(0d, 0.001d), new PlanningBoundary.Point(0d, 0.002d)),
+                "zero-area polygon must be rejected");
+        requireBoundaryRejected(Arrays.asList(new PlanningBoundary.Point(0d, 0d),
+                new PlanningBoundary.Point(0.001d, 0.001d), new PlanningBoundary.Point(0d, 0.001d),
+                new PlanningBoundary.Point(0.001d, 0d)), "self-crossing polygon must be rejected");
+        PlanningBoundary concave = PlanningBoundary.inclusionPolygon("Concave", Arrays.asList(
+                new PlanningBoundary.Point(38.700d, -9.100d), new PlanningBoundary.Point(38.700d, -9.098d),
+                new PlanningBoundary.Point(38.701d, -9.099d), new PlanningBoundary.Point(38.702d, -9.098d),
+                new PlanningBoundary.Point(38.702d, -9.100d)));
+        require(concave.getPoints().size() == 5, "a valid concave polygon must remain available for persistence");
+    }
+
+    private static void requireBoundaryRejected(List<PlanningBoundary.Point> points, String message) {
+        boolean rejected = false;
+        try { PlanningBoundary.inclusionPolygon("Bad", points); }
+        catch (IllegalArgumentException expected) { rejected = true; }
+        require(rejected, message);
     }
 
 

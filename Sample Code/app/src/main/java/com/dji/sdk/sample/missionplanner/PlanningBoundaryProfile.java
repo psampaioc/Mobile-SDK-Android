@@ -15,11 +15,48 @@ public final class PlanningBoundaryProfile {
     private final List<PlanningBoundary> boundaries;
     public PlanningBoundaryProfile(String name, List<PlanningBoundary> boundaries) {
         this.name = name == null || name.trim().isEmpty() ? "Local profile" : name.trim();
-        this.boundaries = Collections.unmodifiableList(new ArrayList<>(boundaries == null
-                ? Collections.<PlanningBoundary>emptyList() : boundaries));
+        List<PlanningBoundary> values = new ArrayList<>(boundaries == null
+                ? Collections.<PlanningBoundary>emptyList() : boundaries);
+        for (PlanningBoundary boundary : values) {
+            if (boundary == null) throw new IllegalArgumentException("Boundary profile contains an empty boundary");
+        }
+        this.boundaries = Collections.unmodifiableList(values);
     }
     public String getName() { return name; }
     public List<PlanningBoundary> getBoundaries() { return boundaries; }
+
+    /** Returns a new profile and leaves all previously saved local advice untouched. */
+    public PlanningBoundaryProfile withBoundaryAppended(PlanningBoundary boundary) {
+        requireBoundary(boundary);
+        List<PlanningBoundary> values = new ArrayList<>(boundaries);
+        values.add(boundary);
+        return new PlanningBoundaryProfile(name, values);
+    }
+
+    /** Returns a new profile with exactly one selected boundary replaced. */
+    public PlanningBoundaryProfile withBoundaryReplaced(int index, PlanningBoundary boundary) {
+        requireBoundary(boundary);
+        requireIndex(index);
+        List<PlanningBoundary> values = new ArrayList<>(boundaries);
+        values.set(index, boundary);
+        return new PlanningBoundaryProfile(name, values);
+    }
+
+    /** Returns a new profile with exactly one selected boundary removed. */
+    public PlanningBoundaryProfile withBoundaryDeleted(int index) {
+        requireIndex(index);
+        List<PlanningBoundary> values = new ArrayList<>(boundaries);
+        values.remove(index);
+        return new PlanningBoundaryProfile(name, values);
+    }
+
+    private void requireIndex(int index) {
+        if (index < 0 || index >= boundaries.size()) throw new IllegalArgumentException("Boundary index is unavailable");
+    }
+
+    private static void requireBoundary(PlanningBoundary boundary) {
+        if (boundary == null) throw new IllegalArgumentException("Boundary is required");
+    }
     public String encode() throws JSONException {
         JSONObject root = new JSONObject().put("v", VERSION).put("name", name);
         JSONArray values = new JSONArray();

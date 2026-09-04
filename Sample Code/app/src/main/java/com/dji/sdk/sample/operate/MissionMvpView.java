@@ -130,10 +130,16 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
             });
         }
 
-        @Override public void onExecutionStart() { post(() -> status.setText("Mission execution started.")); }
+        @Override public void onExecutionStart() { post(() -> {
+            SessionTimelineStore.dji("MISSION_START_RESULT", "Mission execution started");
+            status.setText("Mission execution started.");
+        }); }
 
         @Override public void onExecutionFinish(dji.common.error.DJIError error) {
-            post(() -> status.setText(error == null ? "Mission finished." : "Mission ended: " + error.getDescription()));
+            post(() -> {
+                SessionTimelineStore.dji("MISSION_FINISH", error == null ? "Mission finished" : error.getDescription());
+                status.setText(error == null ? "Mission finished." : "Mission ended: " + error.getDescription());
+            });
         }
     };
 
@@ -212,6 +218,7 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
             int count = draft.getWaypoints().size();
             WaypointMission candidate = WaypointMissionFactory.create(draft);
             DJIError error = operator.loadMission(candidate);
+            SessionTimelineStore.android("MISSION_LOAD_RESULT", error == null ? "Mission loaded locally" : error.getDescription());
             status.setText(error == null ? String.format(Locale.US, "Loaded %d waypoints. Upload is now available.", count)
                     : "Load failed: " + error.getDescription());
             uploaded = false;
@@ -235,6 +242,7 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
         if (preflightError != null) { status.setText("Preflight: " + preflightError); return; }
         operator.uploadMission(error -> {
             uploaded = error == null;
+            SessionTimelineStore.dji("MISSION_UPLOAD_RESULT", error == null ? "Upload completed" : error.getDescription());
             status.setText(error == null ? "Upload successful. Start is now available."
                     : "Upload failed: " + error.getDescription());
             post(this::renderMissionSync);
@@ -252,6 +260,7 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
         }
         status.setText("Downloading mission evidence from aircraft.");
         operator.downloadMission(error -> post(() -> {
+            SessionTimelineStore.dji("MISSION_DOWNLOAD_RESULT", error == null ? "Download request completed" : error.getDescription());
             if (error != null) status.setText("Download failed: " + error.getDescription());
             else status.setText("Download request completed. Remote route content remains SDK-limited.");
             renderMissionSync();
@@ -275,14 +284,22 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
             return;
         }
         operator.startMission(error -> {
-            if (error != null) { status.setText("Start failed: " + error.getDescription()); return; }
+            if (error != null) {
+                SessionTimelineStore.dji("MISSION_START_RESULT", error.getDescription());
+                status.setText("Start failed: " + error.getDescription()); return;
+            }
+            SessionTimelineStore.dji("MISSION_START_RESULT", "Start request accepted");
             status.setText("Mission started. Returning to Operate.");
             if (getContext() instanceof Activity) ((Activity) getContext()).onBackPressed();
         });
     }
 
     private CommonCallbacks.CompletionCallback result(final String action) {
-        return error -> status.setText(error == null ? action + " successful." : action + " failed: " + error.getDescription());
+        return error -> post(() -> {
+            SessionTimelineStore.dji("MISSION_" + action.toUpperCase(Locale.US) + "_RESULT",
+                    error == null ? action + " successful" : error.getDescription());
+            status.setText(error == null ? action + " successful." : action + " failed: " + error.getDescription());
+        });
     }
 
     private MissionDraft loadInitialDraft() {
@@ -560,10 +577,12 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
     }
 
     private void setDjiHome(MissionWaypoint waypoint, int index) {
+        SessionTimelineStore.operator("DJI_HOME_SET", "Set DJI Home requested for waypoint " + (index + 1));
         boolean sent = DjiDataHub.getInstance().setDjiHomeLocation(
                 new LocationCoordinate2D(waypoint.getLatitude(), waypoint.getLongitude()), error ->
                         post(() -> {
                             if (error != null) {
+                                SessionTimelineStore.dji("DJI_HOME_SET_RESULT", error.getDescription());
                                 status.setText("Set DJI Home failed: " + error.getDescription());
                                 return;
                             }
@@ -571,10 +590,14 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
                             // lag this state by one or more callbacks, so do not block LOAD/UPLOAD
                             // while waiting for that passive update.
                             confirmedDjiHome.confirm(waypoint.getLatitude(), waypoint.getLongitude());
+                            SessionTimelineStore.dji("DJI_HOME_SET_RESULT", "DJI Home confirmed for waypoint " + (index + 1));
                             renderConfirmedDjiHome();
                             status.setText("DJI Home set to waypoint " + (index + 1) + ".");
                         }));
-        if (!sent) status.setText("DJI Home is unavailable: flight controller or coordinates not ready.");
+        if (!sent) {
+            SessionTimelineStore.android("DJI_HOME_SET_RESULT", "Flight controller or coordinates unavailable");
+            status.setText("DJI Home is unavailable: flight controller or coordinates not ready.");
+        }
     }
 
     private void openMissionLibrary() {
@@ -652,29 +675,95 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
 
     private void openBoundaryProfiles() {
         java.util.List<PlanningBoundaryProfile> profiles = boundaryProfiles.loadAll();
-        String[] names = new String[profiles.size() + 1]; names[0] = "NEW LOCAL BOUNDARY";
+        String[] names = new String[profiles.size() + 1]; names[0] = "NEW PROFILE";
         for (int index = 0; index < profiles.size(); index++) names[index + 1] = profiles.get(index).getName();
         new AlertDialog.Builder(getContext()).setTitle("LOCAL BOUNDARIES")
-                .setItems(names, (dialog, index) -> { if (index == 0) chooseBoundaryType(); else selectBoundaryProfile(profiles.get(index - 1)); }).show();
+                .setItems(names, (dialog, index) -> {
+                    if (index == 0) createBoundaryProfile();
+                    else openBoundaryProfileEditor(profiles.get(index - 1));
+                }).show();
     }
 
-    private void chooseBoundaryType() {
+    private void createBoundaryProfile() {
+        EditText profileName = inspectorField("Local profile", android.text.InputType.TYPE_CLASS_TEXT);
+        new AlertDialog.Builder(getContext()).setTitle("NEW LOCAL PROFILE").setView(profileName)
+                .setNegativeButton("CANCEL", null)
+                .setPositiveButton("CONTINUE", (dialog, ignored) -> {
+                    PlanningBoundaryProfile profile = new PlanningBoundaryProfile(profileName.getText().toString(),
+                            java.util.Collections.<PlanningBoundary>emptyList());
+                    if (findBoundaryProfile(profile.getName()) != null) {
+                        status.setText("Profile already exists. Select it to add or edit a boundary.");
+                        return;
+                    }
+                    openBoundaryProfileEditor(profile);
+                }).show();
+    }
+
+    private void openBoundaryProfileEditor(PlanningBoundaryProfile profile) {
+        selectBoundaryProfile(profile);
+        String[] entries = new String[profile.getBoundaries().size() + 1];
+        entries[0] = "+ NEW BOUNDARY";
+        for (int index = 0; index < profile.getBoundaries().size(); index++) {
+            PlanningBoundary boundary = profile.getBoundaries().get(index);
+            entries[index + 1] = String.format(Locale.US, "%d. %s · %s %s", index + 1, boundary.getName(),
+                    boundary.getKind().name(), boundary.getShape().name());
+        }
+        new AlertDialog.Builder(getContext()).setTitle(profile.getName() + " — LOCAL ONLY")
+                .setItems(entries, (dialog, index) -> {
+                    if (index == 0) chooseBoundaryType(profile);
+                    else editBoundary(profile, index - 1, profile.getBoundaries().get(index - 1));
+                }).show();
+    }
+
+    private void chooseBoundaryType(PlanningBoundaryProfile profile) {
         String[] types = {"EXCLUSION CIRCLE", "INCLUSION CIRCLE", "EXCLUSION POLYGON", "INCLUSION POLYGON"};
         new AlertDialog.Builder(getContext()).setTitle("NEW LOCAL BOUNDARY")
-                .setItems(types, (dialog, index) -> editBoundary(types[index])).show();
+                .setItems(types, (dialog, index) -> editBoundary(profile, -1, types[index], null)).show();
     }
 
-    private void editBoundary(String type) {
+    private void editBoundary(PlanningBoundaryProfile profile, int index, PlanningBoundary boundary) {
+        String type = boundary.getKind().name() + " " + boundary.getShape().name();
+        editBoundary(profile, index, type, boundary);
+    }
+
+    private void editBoundary(PlanningBoundaryProfile profile, int index, String type, PlanningBoundary existing) {
         LinearLayout panel = new LinearLayout(getContext()); panel.setOrientation(VERTICAL); panel.setPadding(dp(18), dp(6), dp(18), 0);
-        EditText profileName = inspectorField("Local profile", android.text.InputType.TYPE_CLASS_TEXT);
         boolean circle = type.endsWith("CIRCLE");
-        EditText geometry = inspectorField(circle ? "lat,lon,radius_m" : "lat,lon; lat,lon; lat,lon", android.text.InputType.TYPE_CLASS_TEXT);
-        panel.addView(inspectorLabel("PROFILE NAME")); panel.addView(profileName); panel.addView(inspectorLabel(circle ? "CENTER / RADIUS" : "POLYGON VERTICES")); panel.addView(geometry);
-        new AlertDialog.Builder(getContext()).setTitle(type).setView(panel).setNegativeButton("CANCEL", null)
-                .setPositiveButton("SAVE LOCAL", (dialog, ignored) -> saveBoundary(type, profileName.getText().toString(), geometry.getText().toString())).show();
+        EditText geometry = inspectorField(existing == null ? (circle ? "lat,lon,radius_m" : "lat,lon; lat,lon; lat,lon")
+                : boundaryGeometry(existing), android.text.InputType.TYPE_CLASS_TEXT);
+        panel.addView(inspectorLabel("PROFILE — " + profile.getName()));
+        panel.addView(inspectorLabel(circle ? "CENTER / RADIUS" : "POLYGON VERTICES")); panel.addView(geometry);
+        AlertDialog.Builder builder = new AlertDialog.Builder(getContext()).setTitle(existing == null ? type : "EDIT " + type)
+                .setView(panel).setNegativeButton("CANCEL", null)
+                .setPositiveButton("SAVE LOCAL", null);
+        if (existing != null) builder.setNeutralButton("DELETE", null);
+        AlertDialog dialog = builder.create();
+        dialog.setOnShowListener(ignored -> {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
+                if (saveBoundary(profile, index, type, geometry.getText().toString())) dialog.dismiss();
+            });
+            if (existing != null) dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(view -> {
+                dialog.dismiss();
+                confirmDeleteBoundary(profile, index);
+            });
+        });
+        dialog.show();
     }
 
-    private void saveBoundary(String type, String name, String source) {
+    private String boundaryGeometry(PlanningBoundary boundary) {
+        if (boundary.getShape() == PlanningBoundary.Shape.CIRCLE) {
+            PlanningBoundary.Point point = boundary.getPoints().get(0);
+            return String.format(Locale.US, "%.6f,%.6f,%.1f", point.getLatitude(), point.getLongitude(), boundary.getRadiusMeters());
+        }
+        StringBuilder result = new StringBuilder();
+        for (PlanningBoundary.Point point : boundary.getPoints()) {
+            if (result.length() > 0) result.append("; ");
+            result.append(String.format(Locale.US, "%.6f,%.6f", point.getLatitude(), point.getLongitude()));
+        }
+        return result.toString();
+    }
+
+    private boolean saveBoundary(PlanningBoundaryProfile profile, int index, String type, String source) {
         try {
             boolean exclusion = type.startsWith("EXCLUSION"); PlanningBoundary.Kind kind = exclusion ? PlanningBoundary.Kind.EXCLUSION : PlanningBoundary.Kind.INCLUSION;
             PlanningBoundary boundary;
@@ -682,10 +771,33 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
                 boundary = PlanningBoundary.circle(type, kind, Double.parseDouble(parts[0].trim()), Double.parseDouble(parts[1].trim()), Double.parseDouble(parts[2].trim()));
             } else { java.util.List<PlanningBoundary.Point> points = new java.util.ArrayList<>(); for (String pair : source.split(";")) { String[] parts = pair.split(","); if (parts.length != 2) throw new IllegalArgumentException("use lat,lon; lat,lon; lat,lon"); points.add(new PlanningBoundary.Point(Double.parseDouble(parts[0].trim()), Double.parseDouble(parts[1].trim()))); }
                 boundary = PlanningBoundary.polygon(type, kind, points); }
-            PlanningBoundaryProfile profile = new PlanningBoundaryProfile(name, java.util.Collections.singletonList(boundary));
-            if (!boundaryProfiles.save(profile)) throw new IllegalArgumentException("could not save profile");
-            selectBoundaryProfile(profile); status.setText("Local profile saved. It is not DJI enforced.");
-        } catch (RuntimeException error) { status.setText("Boundary not saved: " + error.getMessage()); }
+            PlanningBoundaryProfile updated = index < 0 ? profile.withBoundaryAppended(boundary)
+                    : profile.withBoundaryReplaced(index, boundary);
+            if (!boundaryProfiles.save(updated)) throw new IllegalArgumentException("could not save profile");
+            selectBoundaryProfile(updated); status.setText("Local profile saved. It is not DJI enforced.");
+            return true;
+        } catch (RuntimeException error) {
+            status.setText("Boundary not saved: " + error.getMessage());
+            return false;
+        }
+    }
+
+    private void confirmDeleteBoundary(PlanningBoundaryProfile profile, int index) {
+        if (index < 0 || index >= profile.getBoundaries().size()) return;
+        PlanningBoundary boundary = profile.getBoundaries().get(index);
+        new AlertDialog.Builder(getContext()).setTitle("Delete local boundary?")
+                .setMessage(boundary.getName() + " will be removed from " + profile.getName()
+                        + ". This does not change DJI aircraft restrictions.")
+                .setNegativeButton("CANCEL", null)
+                .setPositiveButton("DELETE", (dialog, ignored) -> {
+                    PlanningBoundaryProfile updated = profile.withBoundaryDeleted(index);
+                    if (!boundaryProfiles.save(updated)) {
+                        status.setText("Boundary was not deleted locally.");
+                        return;
+                    }
+                    selectBoundaryProfile(updated);
+                    status.setText("Local boundary deleted. It was not DJI enforced.");
+                }).show();
     }
 
     private void selectBoundaryProfile(PlanningBoundaryProfile profile) {
@@ -694,12 +806,33 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
         renderBoundaryWarnings();
     }
 
+    private PlanningBoundaryProfile findBoundaryProfile(String name) {
+        String normalized = new PlanningBoundaryProfile(name, java.util.Collections.<PlanningBoundary>emptyList()).getName();
+        if (activeBoundaryProfile != null && normalized.equals(activeBoundaryProfile.getName())) return activeBoundaryProfile;
+        for (PlanningBoundaryProfile profile : boundaryProfiles.loadAll()) {
+            if (normalized.equals(profile.getName())) return profile;
+        }
+        return null;
+    }
+
     private void renderBoundaryWarnings() {
         if (boundaryWarning == null) return;
         if (activeBoundaryProfile == null) { boundaryWarning.setText("LOCAL PLANNING WARNING — NOT DJI ENFORCED"); return; }
-        int count = BoundaryEvaluator.evaluate(routeEditor.getDraft(), activeBoundaryProfile.getBoundaries()).getWarningCount();
+        BoundaryEvaluator.Result evaluation = BoundaryEvaluator.evaluate(routeEditor.getDraft(), activeBoundaryProfile.getBoundaries());
+        int count = evaluation.getWarningCount();
         boundaryWarning.setText(activeBoundaryProfile.getName() + " — " + count
-                + " ROUTE WARNING" + (count == 1 ? "" : "S") + " · NOT DJI ENFORCED");
+                + " ROUTE WARNING" + (count == 1 ? "" : "S")
+                + (count == 0 ? "" : ": " + joinBoundaryNames(evaluation.getWarningBoundaryNames()))
+                + " · NOT DJI ENFORCED");
+    }
+
+    private String joinBoundaryNames(java.util.List<String> names) {
+        StringBuilder result = new StringBuilder();
+        for (String boundaryName : names) {
+            if (result.length() > 0) result.append(", ");
+            result.append(boundaryName);
+        }
+        return result.toString();
     }
 
     private void openSessionLog() {

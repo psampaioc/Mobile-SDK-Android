@@ -1,5 +1,6 @@
 package com.dji.sdk.sample.missionplanner;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
@@ -7,8 +8,8 @@ import java.util.List;
 public final class BoundaryEvaluator {
     private BoundaryEvaluator() { }
     public static Result evaluate(MissionDraft draft, List<PlanningBoundary> boundaries) {
-        if (draft == null || boundaries == null || boundaries.isEmpty()) return new Result(0);
-        int warnings = 0;
+        if (draft == null || boundaries == null || boundaries.isEmpty()) return new Result(Collections.<String>emptyList());
+        List<String> warningNames = new ArrayList<>();
         for (PlanningBoundary boundary : boundaries) {
             boolean violation = false;
             List<MissionWaypoint> route = draft.getWaypoints();
@@ -18,9 +19,9 @@ public final class BoundaryEvaluator {
                         || (boundary.getKind() == PlanningBoundary.Kind.INCLUSION && !inside)) { violation = true; break; }
                 if (i > 0 && crosses(boundary, route.get(i - 1), route.get(i))) { violation = true; break; }
             }
-            if (violation) warnings++;
+            if (violation) warningNames.add(boundary.getName());
         }
-        return new Result(warnings);
+        return new Result(warningNames);
     }
     private static boolean contains(PlanningBoundary b, double lat, double lon) {
         if (b.getShape() == PlanningBoundary.Shape.CIRCLE) return distanceMeters(b.getPoints().get(0), lat, lon) <= b.getRadiusMeters();
@@ -53,7 +54,17 @@ public final class BoundaryEvaluator {
             double cx, double cy, double dx, double dy) {
         double ab1 = cross(ax, ay, bx, by, cx, cy), ab2 = cross(ax, ay, bx, by, dx, dy);
         double cd1 = cross(cx, cy, dx, dy, ax, ay), cd2 = cross(cx, cy, dx, dy, bx, by);
-        return ab1 * ab2 <= 0d && cd1 * cd2 <= 0d;
+        if (oppositeSides(ab1, ab2) && oppositeSides(cd1, cd2)) return true;
+        return (isZero(ab1) && onSegment(ax, ay, bx, by, cx, cy))
+                || (isZero(ab2) && onSegment(ax, ay, bx, by, dx, dy))
+                || (isZero(cd1) && onSegment(cx, cy, dx, dy, ax, ay))
+                || (isZero(cd2) && onSegment(cx, cy, dx, dy, bx, by));
+    }
+    private static boolean oppositeSides(double first, double second) { return first * second < 0d; }
+    private static boolean isZero(double value) { return Math.abs(value) < 0.000000001d; }
+    private static boolean onSegment(double ax, double ay, double bx, double by, double px, double py) {
+        return px >= Math.min(ax, bx) - 0.000000001d && px <= Math.max(ax, bx) + 0.000000001d
+                && py >= Math.min(ay, by) - 0.000000001d && py <= Math.max(ay, by) + 0.000000001d;
     }
     private static double cross(double ax, double ay, double bx, double by, double px, double py) {
         return (bx - ax) * (py - ay) - (by - ay) * (px - ax);
@@ -72,6 +83,12 @@ public final class BoundaryEvaluator {
         double dx = (lon - p.getLongitude()) * 111320d * Math.cos(Math.toRadians((lat + p.getLatitude()) / 2d));
         double dy = (lat - p.getLatitude()) * 110540d; return Math.sqrt(dx * dx + dy * dy);
     }
-    public static final class Result { private final int warnings; private Result(int warnings) { this.warnings = warnings; }
-        public int getWarningCount() { return warnings; } }
+    public static final class Result {
+        private final List<String> warningBoundaryNames;
+        private Result(List<String> warningBoundaryNames) {
+            this.warningBoundaryNames = Collections.unmodifiableList(new ArrayList<>(warningBoundaryNames));
+        }
+        public int getWarningCount() { return warningBoundaryNames.size(); }
+        public List<String> getWarningBoundaryNames() { return warningBoundaryNames; }
+    }
 }

@@ -43,6 +43,7 @@ public final class TransportRuntime implements Closeable {
     private Thread rateWriter;
     private Aircraft aircraft;
     private volatile boolean running = true;
+    private Boolean lastTransportDegraded;
 
     public TransportRuntime(Context context, Aircraft aircraft, TransportConfig config) throws Exception {
         this.aircraft = aircraft;
@@ -106,6 +107,7 @@ public final class TransportRuntime implements Closeable {
                     primary.getAccessUnitCount(), secondary.getAccessUnitCount(),
                     primary.getRtpPacketCount(), secondary.getRtpPacketCount());
             diagnostics.writeJsonRecord(health);
+            recordTransportHealthTransition();
             if (++localDiagnosticTicks >= 10) {
                 localDiagnosticTicks = 0;
                 List<CallbackRateSnapshot> snapshots = rates.snapshots();
@@ -131,6 +133,18 @@ public final class TransportRuntime implements Closeable {
     }
     public long getVideoSocketErrors() {
         return primary.getSocketErrorCount() + secondary.getSocketErrorCount();
+    }
+
+    /** Records only a change, so one transient transport fault cannot flood the local timeline. */
+    private void recordTransportHealthTransition() {
+        boolean degraded = getTelemetryDrops() > 0 || telemetryNetwork.getErrorCount() > 0
+                || getPrimaryVideoDrops() > 0 || getSecondaryVideoDrops() > 0 || getVideoSocketErrors() > 0;
+        if (lastTransportDegraded == null || degraded != lastTransportDegraded) {
+            SessionTimelineStore.android("TRANSPORT_HEALTH", degraded
+                    ? "Transport degraded: local drops or socket errors observed"
+                    : "Transport healthy: no local drops or socket errors observed");
+            lastTransportDegraded = degraded;
+        }
     }
 
     @Override public void close() {

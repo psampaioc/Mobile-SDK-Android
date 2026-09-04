@@ -21,7 +21,7 @@ test_class="$sample_root/app/build/intermediates/javac/debugUnitTest/classes/com
 if [[ -f "$test_source" ]]; then
     prepare_android_build_env
     [[ -f "$test_class" ]] || die "Gradle did not compile TransportPrimitivesTest"
-    classpath="$sample_root/app/build/intermediates/javac/debug/classes:$sample_root/app/build/intermediates/javac/debugUnitTest/classes"
+    classpath="$sample_root/app/build/intermediates/javac/debug/classes:$sample_root/app/build/intermediates/javac/debugUnitTest/classes:$ANDROID_SDK_ROOT/platforms/android-33/android.jar"
     "$JAVA_HOME/bin/java" -cp "$classpath" com.dji.sdk.sample.transport.video.TransportPrimitivesTest
 fi
 

@@ -37,6 +37,10 @@ import com.dji.sdk.sample.missionplanner.MissionRouteEditor;
 import com.dji.sdk.sample.missionplanner.MissionPreflight;
 import com.dji.sdk.sample.missionplanner.MissionSyncState;
 import com.dji.sdk.sample.missionplanner.RouteStatistics;
+import com.dji.sdk.sample.missionplanner.BoundaryEvaluator;
+import com.dji.sdk.sample.missionplanner.PlanningBoundaryProfile;
+import com.dji.sdk.sample.missionplanner.PlanningBoundaryProfileLibrary;
+import com.dji.sdk.sample.missionplanner.PlanningBoundary;
 import com.dji.sdk.sample.missionplanner.MissionWaypoint;
 import com.dji.sdk.sample.missionplanner.WaypointMissionFactory;
 import com.dji.sdk.sample.missionplanner.map.MapLibreMissionMapView;
@@ -64,16 +68,19 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
     private final TextView route;
     private final TextView sync;
     private final TextView stats;
+    private final TextView boundaryWarning;
     private final TextView home;
     private final TextView status;
     private final WaypointMissionOperator operator;
     private final MissionDraftLibrary library;
+    private final PlanningBoundaryProfileLibrary boundaryProfiles;
     private final MissionRouteEditor routeEditor;
     private final MapLibreMissionMapView map;
     private WaypointMission loadedMission;
     private MissionDraft loadedDraft;
     private boolean uploaded;
     private boolean draftDirty;
+    private PlanningBoundaryProfile activeBoundaryProfile;
     private boolean addMode;
     private int selectedWaypoint = -1;
     private CallbackMulticaster.Subscription hubSubscription;
@@ -136,9 +143,11 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
         route = findViewById(R.id.mission_mvp_route);
         sync = findViewById(R.id.mission_mvp_sync);
         stats = findViewById(R.id.mission_mvp_stats);
+        boundaryWarning = findViewById(R.id.mission_mvp_boundary_warning);
         home = findViewById(R.id.mission_mvp_home);
         status = findViewById(R.id.mission_mvp_status);
         library = new MissionDraftLibrary(context);
+        boundaryProfiles = new PlanningBoundaryProfileLibrary(context);
         routeEditor = new MissionRouteEditor(loadInitialDraft());
         name.setText(routeEditor.getDraft().getName());
         altitude.setText(String.format(Locale.US, "%.1f", routeEditor.getDraft().getDefaultAltitudeMeters()));
@@ -180,6 +189,7 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
         ((Button) findViewById(R.id.mission_mvp_load)).setOnClickListener(view -> load());
         ((Button) findViewById(R.id.mission_mvp_upload)).setOnClickListener(view -> upload());
         ((Button) findViewById(R.id.mission_mvp_download)).setOnClickListener(view -> download());
+        ((Button) findViewById(R.id.mission_mvp_boundaries)).setOnClickListener(view -> openBoundaryProfiles());
         ((Button) findViewById(R.id.mission_mvp_start)).setOnClickListener(view -> start());
         ((Button) findViewById(R.id.mission_mvp_pause)).setOnClickListener(view -> operator.pauseMission(result("Pause")));
         ((Button) findViewById(R.id.mission_mvp_cancel)).setOnClickListener(view -> operator.stopMission(result("Cancel")));
@@ -627,6 +637,59 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
         map.render(draft);
         renderMissionSync();
         renderRouteStats();
+        renderBoundaryWarnings();
+    }
+
+    private void openBoundaryProfiles() {
+        java.util.List<PlanningBoundaryProfile> profiles = boundaryProfiles.loadAll();
+        String[] names = new String[profiles.size() + 1]; names[0] = "NEW LOCAL BOUNDARY";
+        for (int index = 0; index < profiles.size(); index++) names[index + 1] = profiles.get(index).getName();
+        new AlertDialog.Builder(getContext()).setTitle("LOCAL BOUNDARIES")
+                .setItems(names, (dialog, index) -> { if (index == 0) chooseBoundaryType(); else selectBoundaryProfile(profiles.get(index - 1)); }).show();
+    }
+
+    private void chooseBoundaryType() {
+        String[] types = {"EXCLUSION CIRCLE", "INCLUSION CIRCLE", "EXCLUSION POLYGON", "INCLUSION POLYGON"};
+        new AlertDialog.Builder(getContext()).setTitle("NEW LOCAL BOUNDARY")
+                .setItems(types, (dialog, index) -> editBoundary(types[index])).show();
+    }
+
+    private void editBoundary(String type) {
+        LinearLayout panel = new LinearLayout(getContext()); panel.setOrientation(VERTICAL); panel.setPadding(dp(18), dp(6), dp(18), 0);
+        EditText profileName = inspectorField("Local profile", android.text.InputType.TYPE_CLASS_TEXT);
+        boolean circle = type.endsWith("CIRCLE");
+        EditText geometry = inspectorField(circle ? "lat,lon,radius_m" : "lat,lon; lat,lon; lat,lon", android.text.InputType.TYPE_CLASS_TEXT);
+        panel.addView(inspectorLabel("PROFILE NAME")); panel.addView(profileName); panel.addView(inspectorLabel(circle ? "CENTER / RADIUS" : "POLYGON VERTICES")); panel.addView(geometry);
+        new AlertDialog.Builder(getContext()).setTitle(type).setView(panel).setNegativeButton("CANCEL", null)
+                .setPositiveButton("SAVE LOCAL", (dialog, ignored) -> saveBoundary(type, profileName.getText().toString(), geometry.getText().toString())).show();
+    }
+
+    private void saveBoundary(String type, String name, String source) {
+        try {
+            boolean exclusion = type.startsWith("EXCLUSION"); PlanningBoundary.Kind kind = exclusion ? PlanningBoundary.Kind.EXCLUSION : PlanningBoundary.Kind.INCLUSION;
+            PlanningBoundary boundary;
+            if (type.endsWith("CIRCLE")) { String[] parts = source.split(","); if (parts.length != 3) throw new IllegalArgumentException("use lat,lon,radius_m");
+                boundary = PlanningBoundary.circle(type, kind, Double.parseDouble(parts[0].trim()), Double.parseDouble(parts[1].trim()), Double.parseDouble(parts[2].trim()));
+            } else { java.util.List<PlanningBoundary.Point> points = new java.util.ArrayList<>(); for (String pair : source.split(";")) { String[] parts = pair.split(","); if (parts.length != 2) throw new IllegalArgumentException("use lat,lon; lat,lon; lat,lon"); points.add(new PlanningBoundary.Point(Double.parseDouble(parts[0].trim()), Double.parseDouble(parts[1].trim()))); }
+                boundary = PlanningBoundary.polygon(type, kind, points); }
+            PlanningBoundaryProfile profile = new PlanningBoundaryProfile(name, java.util.Collections.singletonList(boundary));
+            if (!boundaryProfiles.save(profile)) throw new IllegalArgumentException("could not save profile");
+            selectBoundaryProfile(profile); status.setText("Local profile saved. It is not DJI enforced.");
+        } catch (RuntimeException error) { status.setText("Boundary not saved: " + error.getMessage()); }
+    }
+
+    private void selectBoundaryProfile(PlanningBoundaryProfile profile) {
+        activeBoundaryProfile = profile;
+        map.setPlanningBoundaries(profile.getBoundaries());
+        renderBoundaryWarnings();
+    }
+
+    private void renderBoundaryWarnings() {
+        if (boundaryWarning == null) return;
+        if (activeBoundaryProfile == null) { boundaryWarning.setText("LOCAL PLANNING WARNING — NOT DJI ENFORCED"); return; }
+        int count = BoundaryEvaluator.evaluate(routeEditor.getDraft(), activeBoundaryProfile.getBoundaries()).getWarningCount();
+        boundaryWarning.setText(activeBoundaryProfile.getName() + " — " + count
+                + " ROUTE WARNING" + (count == 1 ? "" : "S") + " · NOT DJI ENFORCED");
     }
 
     private void renderMissionSync() {

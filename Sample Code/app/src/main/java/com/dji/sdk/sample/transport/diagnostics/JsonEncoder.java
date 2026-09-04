@@ -3,6 +3,7 @@ package com.dji.sdk.sample.transport.diagnostics;
 import com.dji.sdk.sample.transport.model.TelemetryEvent;
 import com.dji.sdk.sample.transport.model.TelemetryField;
 import com.dji.sdk.sample.transport.network.VideoStreamSender;
+import com.dji.sdk.sample.operate.SessionTimeline;
 
 import java.util.Map;
 
@@ -87,6 +88,19 @@ public final class JsonEncoder {
         member(out, "malformed_nals", parser.malformedNalUnits).append(',');
         member(out, "discontinuities", parser.discontinuities).append("}}");
         return out.toString();
+    }
+
+    /** Local-only timeline evidence. It is not part of the Android-to-edge UDP contract. */
+    public static String sessionTimelineEvent(String sessionId, SessionTimeline.Event event) {
+        StringBuilder out = new StringBuilder(512).append('{');
+        member(out, "schema_version", TelemetryEvent.SCHEMA_VERSION).append(',');
+        member(out, "record_type", "session_timeline").append(',');
+        member(out, "session_id", sessionId).append(',');
+        member(out, "android_elapsed_ms", event.getElapsedRealtimeMs()).append(',');
+        member(out, "time_source", event.getTimeSource().name()).append(',');
+        member(out, "event_type", event.getType()).append(',');
+        member(out, "detail", event.getDetail());
+        return out.append('}').toString();
     }
 
     private static void field(StringBuilder out, TelemetryField field) {

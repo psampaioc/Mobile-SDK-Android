@@ -5,6 +5,7 @@ import com.dji.sdk.sample.transport.model.TelemetryEvent;
 import com.dji.sdk.sample.transport.telemetry.TelemetrySink;
 import com.dji.sdk.sample.transport.network.VideoStreamSender;
 import com.dji.sdk.sample.operate.FlightReadinessSession;
+import com.dji.sdk.sample.operate.SessionTimeline;
 
 import java.io.BufferedWriter;
 import java.io.Closeable;
@@ -77,6 +78,12 @@ public final class AsyncNdjsonDiagnosticWriter implements TelemetrySink, Closeab
         offer(new RawJsonRecord("{\"schema_version\":1,\"kind\":\"flight_readiness\",\"session_id\":\""
                 + sessionId + "\",\"event\":\"" + event.getType() + "\",\"item\":\""
                 + item + "\",\"android_elapsed_ms\":" + event.getElapsedMs() + "}"));
+    }
+
+    /** Queues small local session evidence; producer threads never write to disk directly. */
+    public void writeTimelineEvent(String sessionId, SessionTimeline.Event event) {
+        if (sessionId == null || event == null) return;
+        offer(new RawJsonRecord(JsonEncoder.sessionTimelineEvent(sessionId, event)));
     }
 
     private void offer(Object record) {

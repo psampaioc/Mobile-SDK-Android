@@ -22,9 +22,12 @@ public final class SessionTimeline {
     }
     private final int capacity; private final ArrayDeque<Event> events = new ArrayDeque<>(); private long dropped;
     public SessionTimeline(int capacity) { if (capacity < 1) throw new IllegalArgumentException("capacity must be positive"); this.capacity = capacity; }
-    public synchronized void record(long elapsedRealtimeMs, TimeSource source, String type, String detail) {
+    public synchronized Event record(long elapsedRealtimeMs, TimeSource source, String type, String detail) {
         if (events.size() == capacity) { events.removeFirst(); dropped++; }
-        events.addLast(new Event(elapsedRealtimeMs, source == null ? TimeSource.ANDROID_OBSERVATION : source, type, detail));
+        Event event = new Event(elapsedRealtimeMs,
+                source == null ? TimeSource.ANDROID_OBSERVATION : source, type, detail);
+        events.addLast(event);
+        return event;
     }
     public synchronized List<Event> snapshot() { return Collections.unmodifiableList(new ArrayList<>(events)); }
     public synchronized long getDroppedCount() { return dropped; }

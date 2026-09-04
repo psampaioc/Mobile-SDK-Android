@@ -16,9 +16,13 @@ public final class PlanningBoundary {
     private final double radiusMeters;
 
     private PlanningBoundary(String name, Kind kind, Shape shape, List<Point> points, double radiusMeters) {
-        if (points == null || (shape == Shape.CIRCLE && points.size() != 1)
-                || (shape == Shape.POLYGON && points.size() < 3) || radiusMeters < 0d) {
+        if (kind == null || shape == null || points == null || (shape == Shape.CIRCLE && points.size() != 1)
+                || (shape == Shape.POLYGON && points.size() < 3)
+                || (shape == Shape.CIRCLE && (!Double.isFinite(radiusMeters) || radiusMeters <= 0d))) {
             throw new IllegalArgumentException("Invalid local planning boundary");
+        }
+        for (Point point : points) if (point == null || !point.isValid()) {
+            throw new IllegalArgumentException("Invalid local planning boundary coordinate");
         }
         this.name = name == null || name.trim().isEmpty() ? "Boundary" : name.trim();
         this.kind = kind;
@@ -55,5 +59,9 @@ public final class PlanningBoundary {
         public Point(double latitude, double longitude) { this.latitude = latitude; this.longitude = longitude; }
         public double getLatitude() { return latitude; }
         public double getLongitude() { return longitude; }
+        private boolean isValid() {
+            return Double.isFinite(latitude) && Double.isFinite(longitude)
+                    && latitude >= -90d && latitude <= 90d && longitude >= -180d && longitude <= 180d;
+        }
     }
 }

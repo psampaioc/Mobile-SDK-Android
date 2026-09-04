@@ -23,6 +23,7 @@ public final class FlightReadinessStore {
     private final CallbackMulticaster<AuditListener> auditListeners = new CallbackMulticaster<>();
     private volatile DjiDataHub.StatusSnapshot latestSnapshot;
     private volatile boolean lastAircraftConnected;
+    private volatile Boolean lastRthActive;
     private CallbackMulticaster.Subscription hubSubscription;
 
     public interface Listener {
@@ -44,10 +45,18 @@ public final class FlightReadinessStore {
                 boolean connected = snapshot.aircraftConnected;
                 if (connected != lastAircraftConnected) {
                     session.beginNewAircraftSession(SystemClock.elapsedRealtime());
+                    SessionTimelineStore.android("AIRCRAFT_LINK", connected
+                            ? "Aircraft connection observed" : "Aircraft disconnection observed");
                     publishLatestEvent();
                     lastAircraftConnected = connected;
                 }
                 latestSnapshot = snapshot;
+                FlightControllerState flight = snapshot.flightState;
+                if (flight != null && (lastRthActive == null || lastRthActive != flight.isGoingHome())) {
+                    boolean active = flight.isGoingHome();
+                    SessionTimelineStore.dji("RTH_STATE", active ? "RTH active" : "RTH inactive");
+                    lastRthActive = active;
+                }
                 publish();
             }
         });
@@ -117,6 +126,9 @@ public final class FlightReadinessStore {
         java.util.List<FlightReadinessSession.Event> events = session.getRecentEvents();
         if (events.isEmpty()) return;
         FlightReadinessSession.Event event = events.get(events.size() - 1);
+        String item = event.getItem() == null ? "" : ": " + event.getItem().getLabel();
+        SessionTimelineStore.android("READINESS_" + event.getType().toUpperCase(),
+                event.getType() + item);
         auditListeners.dispatch(listener -> listener.onReadinessEvent(event));
     }
 }

@@ -5,6 +5,7 @@ import android.content.Context;
 import com.dji.sdk.sample.djihub.CallbackMulticaster;
 import com.dji.sdk.sample.djihub.DjiDataHub;
 import com.dji.sdk.sample.operate.FlightReadinessStore;
+import com.dji.sdk.sample.operate.SessionTimelineStore;
 import com.dji.sdk.sample.transport.clock.AndroidMonotonicClock;
 import com.dji.sdk.sample.transport.clock.MonotonicClock;
 import com.dji.sdk.sample.transport.diagnostics.AsyncNdjsonDiagnosticWriter;
@@ -37,6 +38,7 @@ public final class TransportRuntime implements Closeable {
     private AndroidClockResponder clockResponder;
     private CallbackMulticaster.Subscription hubSubscription;
     private CallbackMulticaster.Subscription readinessAuditSubscription;
+    private CallbackMulticaster.Subscription timelineSubscription;
     private DjiDataHub hub;
     private Thread rateWriter;
     private Aircraft aircraft;
@@ -51,6 +53,9 @@ public final class TransportRuntime implements Closeable {
             File sessionDirectory = new File(directory, sessionId);
             File output = new File(sessionDirectory, "transport.ndjson");
             diagnostics = new AsyncNdjsonDiagnosticWriter(output, 1024);
+            timelineSubscription = SessionTimelineStore.addListener(event ->
+                    diagnostics.writeTimelineEvent(sessionId, event));
+            SessionTimelineStore.android("TRANSPORT_STARTED", "Local transport diagnostics started");
             collector = new DjiTelemetryCollector(sessionId, clock,
                     new CompositeTelemetrySink(telemetryNetwork, diagnostics), rates);
             primary = new VideoStreamSender(sessionId, "primary", clock, config.edgeHost,
@@ -130,12 +135,14 @@ public final class TransportRuntime implements Closeable {
 
     @Override public void close() {
         if (!running) return;
+        SessionTimelineStore.android("TRANSPORT_STOPPING", "Local transport diagnostics stopping");
         running = false;
         if (rateWriter != null) rateWriter.interrupt();
         if (collector != null) collector.stop();
         if (diagnostics != null) diagnostics.writeRateSnapshots(sessionId, rates.snapshots(), clock);
         if (hubSubscription != null) hubSubscription.close();
         if (readinessAuditSubscription != null) readinessAuditSubscription.close();
+        if (timelineSubscription != null) timelineSubscription.close();
         if (clockResponder != null) clockResponder.close();
         if (primary != null) primary.close();
         if (secondary != null) secondary.close();

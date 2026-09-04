@@ -18,6 +18,7 @@ public final class MissionPlannerUnitTestSuite {
         distinguishesLocalAndRemoteMissionEvidence();
         calculatesRouteStatisticsFromLocalDraft();
         detectsCircleAndPolygonBoundaryWarnings();
+        rejectsInvalidPlanningBoundaryGeometry();
         boundsSessionTimelineWithoutBlockingProducers();
         detectsLoadedDraftChanges();
         rejectsUnsafeConnectedState();
@@ -157,6 +158,18 @@ public final class MissionPlannerUnitTestSuite {
                 "timeline must bound old entries rather than blocking producers");
         require(timeline.snapshot().get(0).getTimeSource() == SessionTimeline.TimeSource.DJI_CALLBACK,
                 "timeline must retain explicit time source");
+    }
+
+    private static void rejectsInvalidPlanningBoundaryGeometry() {
+        boolean zeroRadiusRejected = false;
+        try { PlanningBoundary.exclusionCircle("Bad", 0d, 0d, 0d); }
+        catch (IllegalArgumentException expected) { zeroRadiusRejected = true; }
+        require(zeroRadiusRejected, "a local circle must have a positive radius");
+
+        boolean coordinateRejected = false;
+        try { PlanningBoundary.exclusionCircle("Bad", 91d, 0d, 1d); }
+        catch (IllegalArgumentException expected) { coordinateRejected = true; }
+        require(coordinateRejected, "local boundary coordinates must be valid WGS84 coordinates");
     }
 
 

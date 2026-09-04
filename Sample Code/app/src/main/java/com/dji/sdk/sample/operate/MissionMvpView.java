@@ -3,6 +3,7 @@ package com.dji.sdk.sample.operate;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Context;
+import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.content.pm.PackageManager;
@@ -19,6 +20,7 @@ import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ArrayAdapter;
 import android.widget.PopupWindow;
+import android.widget.ScrollView;
 import android.widget.Spinner;
 import android.widget.TextView;
 
@@ -193,6 +195,7 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
         ((Button) findViewById(R.id.mission_mvp_upload)).setOnClickListener(view -> upload());
         ((Button) findViewById(R.id.mission_mvp_download)).setOnClickListener(view -> download());
         ((Button) findViewById(R.id.mission_mvp_boundaries)).setOnClickListener(view -> openBoundaryProfiles());
+        ((Button) findViewById(R.id.mission_mvp_timeline)).setOnClickListener(view -> openSessionLog());
         ((Button) findViewById(R.id.mission_mvp_start)).setOnClickListener(view -> start());
         ((Button) findViewById(R.id.mission_mvp_pause)).setOnClickListener(view -> { SessionTimelineStore.operator("MISSION_PAUSE", "Pause pressed"); operator.pauseMission(result("Pause")); });
         ((Button) findViewById(R.id.mission_mvp_cancel)).setOnClickListener(view -> { SessionTimelineStore.operator("MISSION_CANCEL", "Cancel pressed"); operator.stopMission(result("Cancel")); });
@@ -697,6 +700,33 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
         int count = BoundaryEvaluator.evaluate(routeEditor.getDraft(), activeBoundaryProfile.getBoundaries()).getWarningCount();
         boundaryWarning.setText(activeBoundaryProfile.getName() + " — " + count
                 + " ROUTE WARNING" + (count == 1 ? "" : "S") + " · NOT DJI ENFORCED");
+    }
+
+    private void openSessionLog() {
+        String text = sessionLogText();
+        TextView content = new TextView(getContext()); content.setText(text); content.setTextSize(11);
+        content.setPadding(dp(18), dp(10), dp(18), dp(10));
+        ScrollView scroll = new ScrollView(getContext()); scroll.addView(content);
+        new AlertDialog.Builder(getContext()).setTitle("SESSION LOG").setView(scroll)
+                .setNegativeButton("CLOSE", null).setPositiveButton("EXPORT", (dialog, ignored) -> exportSessionLog(text)).show();
+    }
+
+    private String sessionLogText() {
+        StringBuilder result = new StringBuilder();
+        for (SessionTimeline.Event event : SessionTimelineStore.timeline().snapshot()) {
+            result.append(event.getElapsedRealtimeMs()).append(" ms · ").append(event.getTimeSource())
+                    .append(" · ").append(event.getType()).append(" · ").append(event.getDetail()).append('\n');
+        }
+        if (result.length() == 0) result.append("No events in this session.");
+        long dropped = SessionTimelineStore.timeline().getDroppedCount();
+        if (dropped > 0) result.append("Dropped oldest events: ").append(dropped).append('\n');
+        return result.toString();
+    }
+
+    private void exportSessionLog(String text) {
+        Intent share = new Intent(Intent.ACTION_SEND); share.setType("text/plain"); share.putExtra(Intent.EXTRA_TEXT, text);
+        getContext().startActivity(Intent.createChooser(share, "Export session log"));
+        SessionTimelineStore.operator("SESSION_EXPORT", "Shared local text timeline");
     }
 
     private void renderMissionSync() {

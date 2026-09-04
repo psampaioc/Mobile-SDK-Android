@@ -16,6 +16,7 @@ public final class MissionPlannerUnitTestSuite {
         reordersSelectedWaypointWithoutChangingIt();
         distinguishesLocalAndRemoteMissionEvidence();
         calculatesRouteStatisticsFromLocalDraft();
+        detectsCircleAndPolygonBoundaryWarnings();
         detectsLoadedDraftChanges();
         rejectsUnsafeConnectedState();
         rejectsMissionStartUntilCurrentSessionReviewIsComplete();
@@ -120,6 +121,29 @@ public final class MissionPlannerUnitTestSuite {
                 "duration must use route distance and base speed");
         require(!RouteStatistics.calculate(MissionDraft.empty()).isAvailable(),
                 "incomplete drafts must not fabricate statistics");
+    }
+
+    private static void detectsCircleAndPolygonBoundaryWarnings() {
+        MissionDraft crossing = new MissionDraft("Boundary", 30f, 3f,
+                MissionFinishAction.HOVER_AT_FINAL, Arrays.asList(
+                new MissionWaypoint(0d, -0.002d, null), new MissionWaypoint(0d, 0.002d, null)), null, null);
+        PlanningBoundary circle = PlanningBoundary.exclusionCircle("Pad", 0d, 0d, 100d);
+        require(BoundaryEvaluator.evaluate(crossing, Arrays.asList(circle)).getWarningCount() == 1,
+                "route segment crossing an exclusion circle must warn");
+        PlanningBoundary polygon = PlanningBoundary.inclusionPolygon("Area", Arrays.asList(
+                new PlanningBoundary.Point(-0.001d, -0.001d), new PlanningBoundary.Point(-0.001d, 0.001d),
+                new PlanningBoundary.Point(0.001d, 0.001d), new PlanningBoundary.Point(0.001d, -0.001d)));
+        MissionDraft outside = new MissionDraft("Outside", 30f, 3f, MissionFinishAction.HOVER_AT_FINAL,
+                Arrays.asList(new MissionWaypoint(0d, 0d, null), new MissionWaypoint(0d, 0.003d, null)), null, null);
+        require(BoundaryEvaluator.evaluate(outside, Arrays.asList(polygon)).getWarningCount() == 1,
+                "leaving an inclusion polygon must warn");
+        MissionDraft throughPolygon = new MissionDraft("Cross", 30f, 3f, MissionFinishAction.HOVER_AT_FINAL,
+                Arrays.asList(new MissionWaypoint(0d, -0.002d, null), new MissionWaypoint(0d, 0.002d, null)), null, null);
+        PlanningBoundary exclusionPolygon = PlanningBoundary.exclusionPolygon("No go", Arrays.asList(
+                new PlanningBoundary.Point(-0.001d, -0.001d), new PlanningBoundary.Point(-0.001d, 0.001d),
+                new PlanningBoundary.Point(0.001d, 0.001d), new PlanningBoundary.Point(0.001d, -0.001d)));
+        require(BoundaryEvaluator.evaluate(throughPolygon, Arrays.asList(exclusionPolygon)).getWarningCount() == 1,
+                "route segment crossing an exclusion polygon must warn");
     }
 
     private static void rejectsUnsafeConnectedState() {

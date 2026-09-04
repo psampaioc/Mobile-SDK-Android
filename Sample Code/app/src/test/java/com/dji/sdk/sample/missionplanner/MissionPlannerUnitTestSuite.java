@@ -146,6 +146,7 @@ public final class MissionPlannerUnitTestSuite {
                 "route segment crossing an exclusion polygon must warn");
     }
 
+
     private static void rejectsUnsafeConnectedState() {
         MissionDraft draft = new MissionDraft("Ready", 30f, 3f, MissionFinishAction.HOVER_AT_FINAL,
                 Arrays.asList(new MissionWaypoint(38.7, -9.1, null), new MissionWaypoint(38.71, -9.11, null)), null, null);

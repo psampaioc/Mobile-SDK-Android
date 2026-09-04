@@ -28,8 +28,10 @@ public final class PlanningBoundary {
     }
 
     public static PlanningBoundary exclusionCircle(String name, double latitude, double longitude, double radiusMeters) {
-        return new PlanningBoundary(name, Kind.EXCLUSION, Shape.CIRCLE,
-                Collections.singletonList(new Point(latitude, longitude)), radiusMeters);
+        return circle(name, Kind.EXCLUSION, latitude, longitude, radiusMeters);
+    }
+    public static PlanningBoundary circle(String name, Kind kind, double latitude, double longitude, double radiusMeters) {
+        return new PlanningBoundary(name, kind, Shape.CIRCLE, Collections.singletonList(new Point(latitude, longitude)), radiusMeters);
     }
 
     public static PlanningBoundary inclusionPolygon(String name, List<Point> points) {
@@ -37,8 +39,9 @@ public final class PlanningBoundary {
     }
 
     public static PlanningBoundary exclusionPolygon(String name, List<Point> points) {
-        return new PlanningBoundary(name, Kind.EXCLUSION, Shape.POLYGON, points, 0d);
+        return polygon(name, Kind.EXCLUSION, points);
     }
+    public static PlanningBoundary polygon(String name, Kind kind, List<Point> points) { return new PlanningBoundary(name, kind, Shape.POLYGON, points, 0d); }
 
     public String getName() { return name; }
     public Kind getKind() { return kind; }

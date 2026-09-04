@@ -14,6 +14,7 @@ import androidx.annotation.Nullable;
 
 import com.dji.sdk.sample.missionplanner.MissionDraft;
 import com.dji.sdk.sample.missionplanner.MissionWaypoint;
+import com.dji.sdk.sample.missionplanner.PlanningBoundary;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -24,6 +25,7 @@ import java.util.Map;
 import com.mapbox.mapboxsdk.annotations.Marker;
 import com.mapbox.mapboxsdk.annotations.MarkerOptions;
 import com.mapbox.mapboxsdk.annotations.PolylineOptions;
+import com.mapbox.mapboxsdk.annotations.PolygonOptions;
 import com.mapbox.mapboxsdk.annotations.Icon;
 import com.mapbox.mapboxsdk.annotations.IconFactory;
 import com.mapbox.mapboxsdk.camera.CameraPosition;
@@ -51,6 +53,7 @@ public final class MapLibreMissionMapView extends FrameLayout {
     private Listener listener;
     private LatLng djiHome;
     private LatLng aircraft;
+    private List<PlanningBoundary> planningBoundaries = new ArrayList<>();
 
     public MapLibreMissionMapView(@NonNull Context context) {
         super(context);
@@ -103,6 +106,11 @@ public final class MapLibreMissionMapView extends FrameLayout {
         renderPending();
     }
 
+    public void setPlanningBoundaries(@Nullable List<PlanningBoundary> boundaries) {
+        planningBoundaries = boundaries == null ? new ArrayList<>() : new ArrayList<>(boundaries);
+        renderPending();
+    }
+
     public void centerOn(double latitude, double longitude, double zoom) {
         if (map != null) map.setCameraPosition(new CameraPosition.Builder()
                 .target(new LatLng(latitude, longitude)).zoom(zoom).build());
@@ -124,6 +132,7 @@ public final class MapLibreMissionMapView extends FrameLayout {
         waypointMarkers.clear();
         if (djiHome != null) map.addMarker(new MarkerOptions().position(djiHome).title("DJI HOME"));
         if (aircraft != null) map.addMarker(new MarkerOptions().position(aircraft).title("AIRCRAFT"));
+        renderPlanningBoundaries();
         List<LatLng> route = new ArrayList<>();
         int number = 1;
         for (MissionWaypoint waypoint : pendingDraft.getWaypoints()) {
@@ -136,6 +145,36 @@ public final class MapLibreMissionMapView extends FrameLayout {
         }
         if (route.size() > 1) map.addPolyline(new PolylineOptions().addAll(route)
                 .color(0xFF2A9D4B).width(4f));
+    }
+
+    private void renderPlanningBoundaries() {
+        for (PlanningBoundary boundary : planningBoundaries) {
+            List<LatLng> geometry = boundary.getShape() == PlanningBoundary.Shape.CIRCLE
+                    ? circleGeometry(boundary) : polygonGeometry(boundary);
+            if (geometry.size() < 3) continue;
+            boolean exclusion = boundary.getKind() == PlanningBoundary.Kind.EXCLUSION;
+            map.addPolygon(new PolygonOptions().addAll(geometry)
+                    .fillColor(exclusion ? 0x33D64040 : 0x332A9D4B)
+                    .strokeColor(exclusion ? 0xFFD64040 : 0xFF2A9D4B));
+        }
+    }
+
+    private List<LatLng> polygonGeometry(PlanningBoundary boundary) {
+        List<LatLng> geometry = new ArrayList<>();
+        for (PlanningBoundary.Point point : boundary.getPoints()) geometry.add(new LatLng(point.getLatitude(), point.getLongitude()));
+        return geometry;
+    }
+
+    private List<LatLng> circleGeometry(PlanningBoundary boundary) {
+        List<LatLng> geometry = new ArrayList<>(); PlanningBoundary.Point center = boundary.getPoints().get(0);
+        for (int step = 0; step < 24; step++) {
+            double angle = Math.PI * 2d * step / 24d;
+            double lat = center.getLatitude() + boundary.getRadiusMeters() * Math.cos(angle) / 110540d;
+            double lon = center.getLongitude() + boundary.getRadiusMeters() * Math.sin(angle)
+                    / (111320d * Math.cos(Math.toRadians(center.getLatitude())));
+            geometry.add(new LatLng(lat, lon));
+        }
+        return geometry;
     }
 
     /** Creates a stable, numbered marker so the visible order equals the mission order. */

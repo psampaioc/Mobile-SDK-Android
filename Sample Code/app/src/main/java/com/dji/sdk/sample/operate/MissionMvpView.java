@@ -32,6 +32,7 @@ import com.dji.sdk.sample.internal.view.PresentableView;
 import com.dji.sdk.sample.missionplanner.MissionDraft;
 import com.dji.sdk.sample.missionplanner.MissionFinishAction;
 import com.dji.sdk.sample.missionplanner.MissionDraftLibrary;
+import com.dji.sdk.sample.missionplanner.MissionDraftValidator;
 import com.dji.sdk.sample.missionplanner.MissionRouteEditor;
 import com.dji.sdk.sample.missionplanner.MissionPreflight;
 import com.dji.sdk.sample.missionplanner.MissionWaypoint;
@@ -67,6 +68,7 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
     private WaypointMission loadedMission;
     private MissionDraft loadedDraft;
     private boolean uploaded;
+    private boolean draftDirty;
     private boolean addMode;
     private int selectedWaypoint = -1;
     private CallbackMulticaster.Subscription hubSubscription;
@@ -134,8 +136,7 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
                 routeEditor.append(new MissionWaypoint(latitude, longitude, null));
                 selectedWaypoint = routeEditor.getDraft().getWaypoints().size() - 1;
                 addMode = false;
-                refreshRoute();
-                status.setText(String.format(Locale.US, "Waypoint %d added at %.6f, %.6f.",
+                routeChanged(String.format(Locale.US, "Waypoint %d added at %.6f, %.6f.",
                         selectedWaypoint + 1, latitude, longitude));
             }
             @Override public void onWaypointTap(int index, float x, float y) {
@@ -176,6 +177,8 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
             uploaded = false;
             loadedMission = error == null ? candidate : null;
             loadedDraft = error == null ? draft : null;
+            draftDirty = error != null;
+            refreshRoute();
         } catch (IllegalArgumentException error) {
             loadedMission = null;
             loadedDraft = null;
@@ -251,15 +254,17 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
         try {
             MissionDraft draft = currentDraft();
             routeEditor.replace(draft);
-            status.setText(library.save(draft) ? "Draft saved locally." : "Draft is invalid and was not saved.");
+            boolean saved = library.save(draft);
+            draftDirty = !saved;
+            refreshRoute();
+            status.setText(saved ? "Draft saved locally." : "Draft is invalid and was not saved.");
         } catch (IllegalArgumentException exception) { status.setText("Invalid draft: " + exception.getMessage()); }
     }
 
     private void deleteSelected() {
         if (!routeEditor.delete(selectedWaypoint)) { status.setText("Select a waypoint to delete."); return; }
         selectedWaypoint = -1;
-        refreshRoute();
-        status.setText("Waypoint deleted.");
+        routeChanged("Waypoint deleted.");
     }
 
     private void showWaypointMenu(int index, float x, float y) {
@@ -272,10 +277,16 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
                 LinearLayout.LayoutParams.WRAP_CONTENT, true);
         popup.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
         popup.setOutsideTouchable(true);
+        Button inspect = waypointMenuButton("INSPECT / EDIT");
         Button setHome = waypointMenuButton("SET DJI HOME");
         Button delete = waypointMenuButton("DELETE");
+        content.addView(inspect);
         content.addView(setHome);
         content.addView(delete);
+        inspect.setOnClickListener(view -> {
+            popup.dismiss();
+            inspectWaypoint(index);
+        });
         setHome.setOnClickListener(view -> {
             popup.dismiss();
             confirmSetDjiHome(index);
@@ -306,6 +317,168 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
         button.setLayoutParams(new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, dp(36)));
         return button;
+    }
+
+    private void inspectWaypoint(int index) {
+        if (index < 0 || index >= routeEditor.getDraft().getWaypoints().size()) return;
+        selectedWaypoint = index;
+        MissionDraft draft = routeEditor.getDraft();
+        MissionWaypoint waypoint = draft.getWaypoints().get(index);
+        LinearLayout content = new LinearLayout(getContext());
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(20), dp(12), dp(20), dp(4));
+        TextView order = inspectorLabel(String.format(Locale.US, "WAYPOINT %d OF %d", index + 1,
+                draft.getWaypoints().size()));
+        content.addView(order);
+        content.addView(inspectorLabel("LATITUDE (WGS84)"));
+        EditText latitude = inspectorField(String.format(Locale.US, "%.6f", waypoint.getLatitude()),
+                android.text.InputType.TYPE_CLASS_NUMBER | android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+                        | android.text.InputType.TYPE_NUMBER_FLAG_SIGNED);
+        content.addView(latitude);
+        content.addView(inspectorLabel("LONGITUDE (WGS84)"));
+        EditText longitude = inspectorField(String.format(Locale.US, "%.6f", waypoint.getLongitude()),
+                android.text.InputType.TYPE_CLASS_NUMBER | android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+                        | android.text.InputType.TYPE_NUMBER_FLAG_SIGNED);
+        content.addView(longitude);
+        String override = waypoint.getAltitudeOverrideMeters() == null ? ""
+                : String.format(Locale.US, "%.1f", waypoint.getAltitudeOverrideMeters());
+        content.addView(inspectorLabel("ALTITUDE OVERRIDE (m) — BLANK = DEFAULT "
+                + String.format(Locale.US, "%.1f", draft.getDefaultAltitudeMeters())));
+        EditText altitudeOverride = inspectorField(override,
+                android.text.InputType.TYPE_CLASS_NUMBER | android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        content.addView(altitudeOverride);
+        LinearLayout actions = new LinearLayout(getContext());
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        actions.setPadding(0, dp(8), 0, 0);
+        Button insertAfter = inspectorAction("INSERT");
+        Button moveEarlier = inspectorAction("EARLIER");
+        Button moveLater = inspectorAction("LATER");
+        Button delete = inspectorAction("DELETE");
+        actions.addView(insertAfter);
+        actions.addView(moveEarlier);
+        actions.addView(moveLater);
+        actions.addView(delete);
+        content.addView(actions);
+        AlertDialog dialog = new AlertDialog.Builder(getContext())
+                .setView(content)
+                .setNegativeButton("CANCEL", null)
+                .setPositiveButton("SAVE WAYPOINT", null)
+                .create();
+        dialog.setOnShowListener(ignored -> {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
+                MissionWaypoint updated;
+                try {
+                    updated = waypointFromFields(latitude, longitude, altitudeOverride);
+                } catch (IllegalArgumentException error) {
+                    status.setText("Waypoint unchanged: " + error.getMessage());
+                    return;
+                }
+                MissionDraft candidate = draft.withWaypoints(replaceWaypoint(draft, index, updated));
+                if (!MissionDraftValidator.validate(candidate).isEmpty()) {
+                    status.setText("Waypoint unchanged: " + MissionDraftValidator.validate(candidate).get(0));
+                    return;
+                }
+                routeEditor.replace(candidate);
+                selectedWaypoint = index;
+                routeChanged("Waypoint " + (index + 1) + " updated. Load it again before upload or start.");
+                dialog.dismiss();
+            });
+            insertAfter.setOnClickListener(view -> {
+                routeEditor.insertAfter(index, new MissionWaypoint(waypoint.getLatitude(), waypoint.getLongitude(),
+                        waypoint.getAltitudeOverrideMeters()));
+                selectedWaypoint = index + 1;
+                routeChanged("Waypoint inserted after " + (index + 1) + ". Load it again before upload or start.");
+                dialog.dismiss();
+                inspectWaypoint(selectedWaypoint);
+            });
+            moveEarlier.setOnClickListener(view -> {
+                if (!routeEditor.moveEarlier(index)) {
+                    status.setText("Waypoint " + (index + 1) + " is already first.");
+                    return;
+                }
+                selectedWaypoint = index - 1;
+                routeChanged("Waypoint moved earlier. Load it again before upload or start.");
+                dialog.dismiss();
+                inspectWaypoint(selectedWaypoint);
+            });
+            moveLater.setOnClickListener(view -> {
+                if (!routeEditor.moveLater(index)) {
+                    status.setText("Waypoint " + (index + 1) + " is already last.");
+                    return;
+                }
+                selectedWaypoint = index + 1;
+                routeChanged("Waypoint moved later. Load it again before upload or start.");
+                dialog.dismiss();
+                inspectWaypoint(selectedWaypoint);
+            });
+            delete.setOnClickListener(view -> {
+                routeEditor.delete(index);
+                selectedWaypoint = -1;
+                routeChanged("Waypoint deleted. Load it again before upload or start.");
+                dialog.dismiss();
+            });
+        });
+        dialog.show();
+    }
+
+    private TextView inspectorLabel(String text) {
+        TextView label = new TextView(getContext());
+        label.setText(text);
+        label.setTextColor(Color.rgb(22, 42, 54));
+        label.setTextSize(12);
+        label.setPadding(0, 0, 0, dp(6));
+        return label;
+    }
+
+    private EditText inspectorField(String value, int inputType) {
+        EditText field = new EditText(getContext());
+        field.setText(value);
+        field.setTextSize(15);
+        field.setSingleLine(true);
+        field.setInputType(inputType);
+        return field;
+    }
+
+    private Button inspectorAction(String label) {
+        Button button = new Button(getContext());
+        button.setText(label);
+        button.setTextSize(9);
+        button.setTextColor(Color.rgb(22, 42, 54));
+        button.setBackgroundResource(R.drawable.operate_mvp_button);
+        button.setLayoutParams(new LinearLayout.LayoutParams(0, dp(34), 1f));
+        return button;
+    }
+
+    private MissionWaypoint waypointFromFields(EditText latitude, EditText longitude, EditText altitudeOverride) {
+        try {
+            double lat = Double.parseDouble(latitude.getText().toString().trim());
+            double lon = Double.parseDouble(longitude.getText().toString().trim());
+            String altitudeText = altitudeOverride.getText().toString().trim();
+            Float override = altitudeText.isEmpty() ? null : Float.parseFloat(altitudeText);
+            if (!LocationCoordinate2D.isValid(lat, lon)) throw new IllegalArgumentException("coordinates are invalid");
+            if (override != null && (!Float.isFinite(override) || override < 0f)) {
+                throw new IllegalArgumentException("altitude override must be zero or greater");
+            }
+            return new MissionWaypoint(lat, lon, override);
+        } catch (NumberFormatException error) {
+            throw new IllegalArgumentException("coordinates and altitude must be numbers");
+        }
+    }
+
+    private java.util.List<MissionWaypoint> replaceWaypoint(MissionDraft draft, int index,
+            MissionWaypoint updated) {
+        java.util.List<MissionWaypoint> waypoints = new java.util.ArrayList<>(draft.getWaypoints());
+        waypoints.set(index, updated);
+        return waypoints;
+    }
+
+    private void routeChanged(String message) {
+        loadedMission = null;
+        loadedDraft = null;
+        uploaded = false;
+        draftDirty = true;
+        refreshRoute();
+        status.setText(message);
     }
 
     private int dp(int value) {
@@ -372,6 +545,7 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
         loadedMission = null;
         loadedDraft = null;
         uploaded = false;
+        draftDirty = false;
         refreshRoute();
         status.setText("Opened " + draft.getName() + ". Edit, then LOAD when ready.");
     }
@@ -408,7 +582,8 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
 
     private void refreshRoute() {
         MissionDraft draft = routeEditor.getDraft();
-        route.setText(String.format(Locale.US, "ROUTE — %d WAYPOINTS", draft.getWaypoints().size()));
+        route.setText(String.format(Locale.US, "ROUTE — %d WAYPOINTS%s", draft.getWaypoints().size(),
+                draftDirty ? " · LOCAL CHANGES" : ""));
         map.render(draft);
     }
 

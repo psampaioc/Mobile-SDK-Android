@@ -46,4 +46,22 @@ public final class MissionRouteEditor {
         draft = draft.withWaypoints(updated);
         return true;
     }
+
+    public boolean moveEarlier(int index) {
+        if (index <= 0 || index >= draft.getWaypoints().size()) return false;
+        List<MissionWaypoint> updated = new ArrayList<>(draft.getWaypoints());
+        MissionWaypoint waypoint = updated.remove(index);
+        updated.add(index - 1, waypoint);
+        draft = draft.withWaypoints(updated);
+        return true;
+    }
+
+    public boolean moveLater(int index) {
+        if (index < 0 || index >= draft.getWaypoints().size() - 1) return false;
+        List<MissionWaypoint> updated = new ArrayList<>(draft.getWaypoints());
+        MissionWaypoint waypoint = updated.remove(index);
+        updated.add(index + 1, waypoint);
+        draft = draft.withWaypoints(updated);
+        return true;
+    }
 }

@@ -13,6 +13,7 @@ public final class MissionPlannerUnitTestSuite {
         rejectsInvalidCoordinatesAndSpeed();
         preservesExplicitFinishAction();
         editsOrderedRouteWithoutChangingDefaults();
+        reordersSelectedWaypointWithoutChangingIt();
         detectsLoadedDraftChanges();
         rejectsUnsafeConnectedState();
         rejectsMissionStartUntilCurrentSessionReviewIsComplete();
@@ -61,6 +62,22 @@ public final class MissionPlannerUnitTestSuite {
         require(changed.getDefaultAltitudeMeters() == 30f, "editing geometry must not change defaults");
         require(editor.delete(1), "selected waypoint must be deletable");
         require(editor.getDraft().getWaypoints().size() == 2, "delete must shrink route");
+    }
+
+    private static void reordersSelectedWaypointWithoutChangingIt() {
+        MissionWaypoint first = new MissionWaypoint(38.7, -9.1, null);
+        MissionWaypoint second = new MissionWaypoint(38.71, -9.11, 35f);
+        MissionWaypoint third = new MissionWaypoint(38.72, -9.12, 40f);
+        MissionRouteEditor editor = new MissionRouteEditor(new MissionDraft("Order", 30f, 3f,
+                MissionFinishAction.HOVER_AT_FINAL, Arrays.asList(first, second, third), null, null));
+        require(editor.moveEarlier(1), "middle waypoint must move earlier");
+        require(editor.getDraft().getWaypoints().get(0).equals(second),
+                "moving earlier must preserve the selected waypoint");
+        require(editor.moveLater(0), "first waypoint must move later");
+        require(editor.getDraft().getWaypoints().get(1).equals(second),
+                "moving later must preserve the selected waypoint");
+        require(!editor.moveEarlier(0), "first waypoint cannot move earlier");
+        require(!editor.moveLater(2), "last waypoint cannot move later");
     }
 
     private static void rejectsUnsafeConnectedState() {

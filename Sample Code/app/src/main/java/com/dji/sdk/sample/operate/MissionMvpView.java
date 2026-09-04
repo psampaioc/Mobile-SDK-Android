@@ -36,6 +36,7 @@ import com.dji.sdk.sample.missionplanner.MissionDraftValidator;
 import com.dji.sdk.sample.missionplanner.MissionRouteEditor;
 import com.dji.sdk.sample.missionplanner.MissionPreflight;
 import com.dji.sdk.sample.missionplanner.MissionSyncState;
+import com.dji.sdk.sample.missionplanner.RouteStatistics;
 import com.dji.sdk.sample.missionplanner.MissionWaypoint;
 import com.dji.sdk.sample.missionplanner.WaypointMissionFactory;
 import com.dji.sdk.sample.missionplanner.map.MapLibreMissionMapView;
@@ -62,6 +63,7 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
     private final Spinner finish;
     private final TextView route;
     private final TextView sync;
+    private final TextView stats;
     private final TextView home;
     private final TextView status;
     private final WaypointMissionOperator operator;
@@ -133,6 +135,7 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
         finish = findViewById(R.id.mission_mvp_finish);
         route = findViewById(R.id.mission_mvp_route);
         sync = findViewById(R.id.mission_mvp_sync);
+        stats = findViewById(R.id.mission_mvp_stats);
         home = findViewById(R.id.mission_mvp_home);
         status = findViewById(R.id.mission_mvp_status);
         library = new MissionDraftLibrary(context);
@@ -145,6 +148,8 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
                 "Hover at final waypoint", "Return and land at DJI Home", "Land at final waypoint"});
         finish.setAdapter(finishAdapter);
         finish.setSelection(routeEditor.getDraft().getFinishAction().ordinal());
+        altitude.setOnFocusChangeListener((view, hasFocus) -> { if (!hasFocus) refreshRoute(); });
+        speed.setOnFocusChangeListener((view, hasFocus) -> { if (!hasFocus) refreshRoute(); });
         map = new MapLibreMissionMapView(context);
         ((FrameLayout) findViewById(R.id.mission_mvp_map)).addView(map);
         map.setListener(new MapLibreMissionMapView.Listener() {
@@ -621,6 +626,7 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
                 draftDirty ? " · LOCAL CHANGES" : ""));
         map.render(draft);
         renderMissionSync();
+        renderRouteStats();
     }
 
     private void renderMissionSync() {
@@ -629,6 +635,33 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
         String stateName = currentState == null ? "" : currentState.getName();
         sync.setText(MissionSyncState.resolve(loadedMission != null && loadedDraft != null, uploaded,
                 draftDirty, stateName).render());
+    }
+
+    private void renderRouteStats() {
+        if (stats == null) return;
+        try {
+            RouteStatistics.Snapshot estimate = RouteStatistics.calculate(currentDraft());
+            if (!estimate.isAvailable()) {
+                stats.setText("ROUTE ESTIMATE — ADD TWO VALID WAYPOINTS\n"
+                        + "TERRAIN UNKNOWN · BATTERY/RESERVE NOT ESTIMATED");
+                return;
+            }
+            stats.setText(String.format(Locale.US,
+                    "ESTIMATE — %.0f m · %d WP · ALT %.0f–%.0f m · %s\n"
+                            + "CLIMB %.0f m · DESCENT %.0f m · TERRAIN UNKNOWN · BATTERY/RESERVE NOT ESTIMATED",
+                    estimate.getDistanceMeters(), estimate.getWaypointCount(),
+                    estimate.getMinimumAltitudeMeters(), estimate.getMaximumAltitudeMeters(),
+                    formatDuration(estimate.getEstimatedDurationSeconds()), estimate.getClimbMeters(),
+                    estimate.getDescentMeters()));
+        } catch (IllegalArgumentException ignored) {
+            stats.setText("ROUTE ESTIMATE — INVALID ALTITUDE OR SPEED\n"
+                    + "TERRAIN UNKNOWN · BATTERY/RESERVE NOT ESTIMATED");
+        }
+    }
+
+    private String formatDuration(double seconds) {
+        int totalSeconds = Math.max(0, (int) Math.round(seconds));
+        return String.format(Locale.US, "%d:%02d", totalSeconds / 60, totalSeconds % 60);
     }
 
     private MissionDraft requireCurrentLoadedDraft() {

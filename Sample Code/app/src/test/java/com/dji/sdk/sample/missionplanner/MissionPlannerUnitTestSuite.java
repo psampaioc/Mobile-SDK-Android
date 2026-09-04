@@ -15,6 +15,7 @@ public final class MissionPlannerUnitTestSuite {
         editsOrderedRouteWithoutChangingDefaults();
         reordersSelectedWaypointWithoutChangingIt();
         distinguishesLocalAndRemoteMissionEvidence();
+        calculatesRouteStatisticsFromLocalDraft();
         detectsLoadedDraftChanges();
         rejectsUnsafeConnectedState();
         rejectsMissionStartUntilCurrentSessionReviewIsComplete();
@@ -98,6 +99,27 @@ public final class MissionPlannerUnitTestSuite {
         MissionSyncState.Snapshot executing = MissionSyncState.resolve(false, false, false, "EXECUTING");
         require(executing.getRemote() == MissionSyncState.Remote.EXECUTING,
                 "DJI execution state is remote evidence");
+    }
+
+    private static void calculatesRouteStatisticsFromLocalDraft() {
+        MissionDraft draft = new MissionDraft("Stats", 30f, 5f,
+                MissionFinishAction.HOVER_AT_FINAL, Arrays.asList(
+                new MissionWaypoint(0d, 0d, null),
+                new MissionWaypoint(0d, 0.001d, 40f),
+                new MissionWaypoint(0d, 0.002d, 20f)), null, null);
+        RouteStatistics.Snapshot stats = RouteStatistics.calculate(draft);
+        require(stats.isAvailable(), "valid route must produce local statistics");
+        require(stats.getWaypointCount() == 3, "waypoint count must match draft");
+        require(stats.getDistanceMeters() > 220d && stats.getDistanceMeters() < 224d,
+                "haversine distance must be plausible");
+        require(stats.getMinimumAltitudeMeters() == 20f && stats.getMaximumAltitudeMeters() == 40f,
+                "resolved altitude range must use overrides");
+        require(stats.getClimbMeters() == 10f && stats.getDescentMeters() == 20f,
+                "climb/descent must follow ordered altitude changes");
+        require(stats.getEstimatedDurationSeconds() > 44d && stats.getEstimatedDurationSeconds() < 45d,
+                "duration must use route distance and base speed");
+        require(!RouteStatistics.calculate(MissionDraft.empty()).isAvailable(),
+                "incomplete drafts must not fabricate statistics");
     }
 
     private static void rejectsUnsafeConnectedState() {

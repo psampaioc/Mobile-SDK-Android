@@ -5,7 +5,8 @@ import android.content.Context;
 import androidx.annotation.NonNull;
 
 import com.dji.sdk.sample.R;
-import com.dji.sdk.sample.internal.controller.DJISampleApplication;
+import com.dji.sdk.sample.djihub.CallbackMulticaster;
+import com.dji.sdk.sample.djihub.DjiDataHub;
 import com.dji.sdk.sample.internal.utils.ModuleVerificationUtil;
 import com.dji.sdk.sample.internal.view.BasePushDataView;
 
@@ -15,6 +16,7 @@ import dji.common.gimbal.GimbalState;
  * Class for getting gimbal information.
  */
 public class PushGimbalDataView extends BasePushDataView {
+    private CallbackMulticaster.Subscription hubSubscription;
 
     public PushGimbalDataView(Context context) {
         super(context);
@@ -25,9 +27,8 @@ public class PushGimbalDataView extends BasePushDataView {
         super.onAttachedToWindow();
 
         if (ModuleVerificationUtil.isGimbalModuleAvailable()) {
-            DJISampleApplication.getProductInstance().getGimbal().setStateCallback(new GimbalState.Callback() {
-                @Override
-                public void onUpdate(@NonNull GimbalState gimbalState) {
+            hubSubscription = DjiDataHub.getInstance().addListener(new DjiDataHub.Listener() {
+                @Override public void onGimbalState(int index, @NonNull GimbalState gimbalState) {
                     stringBuffer.delete(0, stringBuffer.length());
 
                     stringBuffer.append("PitchInDegrees: ").
@@ -47,9 +48,8 @@ public class PushGimbalDataView extends BasePushDataView {
     protected void onDetachedFromWindow() {
         super.onDetachedFromWindow();
 
-        if (ModuleVerificationUtil.isGimbalModuleAvailable()) {
-            DJISampleApplication.getProductInstance().getGimbal().setStateCallback(null);
-        }
+        if (hubSubscription != null) hubSubscription.close();
+        hubSubscription = null;
     }
 
     @Override

@@ -56,7 +56,6 @@ public class XT2CameraView extends LinearLayout implements View.OnClickListener,
     private PopupSeekBar popupSeekBar;
     private TextView primaryVideoFeedTitle;
     private VideoFeedView primaryVideoFeed;
-    private VideoFeeder.PhysicalSourceListener sourceListener;
 
 
     public XT2CameraView(Context context) {
@@ -139,22 +138,11 @@ public class XT2CameraView extends LinearLayout implements View.OnClickListener,
 
 
     private void setUpListeners() {
-        sourceListener = new VideoFeeder.PhysicalSourceListener() {
-            @Override
-            public void onChange(VideoFeeder.VideoFeed videoFeed, PhysicalSource newPhysicalSource) {
-                if (videoFeed == VideoFeeder.getInstance().getPrimaryVideoFeed()) {
-                    String newText = "Primary Source: " + newPhysicalSource.toString();
-                    ToastUtils.setResultToText(primaryVideoFeedTitle, newText);
-                }
-
-
-            }
-        };
         primaryVideoFeed.registerLiveVideo(VideoFeeder.getInstance().getPrimaryVideoFeed(), true);
+        primaryVideoFeed.setSourceListener(source -> ToastUtils.setResultToText(primaryVideoFeedTitle,
+                "Primary Source: " + source));
         String newText = "Primary Source: " + VideoFeeder.getInstance().getPrimaryVideoFeed().getVideoSource().name();
         ToastUtils.setResultToText(primaryVideoFeedTitle, newText);
-
-        VideoFeeder.getInstance().addPhysicalSourceListener(sourceListener);
     }
 
     @Override

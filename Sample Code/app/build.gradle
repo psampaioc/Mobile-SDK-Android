@@ -9,6 +9,9 @@ if (localPropertiesFile.exists()) {
     localPropertiesFile.withInputStream { localProperties.load(it) }
 }
 def djiApiKey = System.getenv('DJI_API_KEY') ?: localProperties.getProperty('DJI_API_KEY', '')
+if (djiApiKey.trim().isEmpty()) {
+    throw new GradleException('DJI_API_KEY is required. Set it in Sample Code/local.properties or the DJI_API_KEY environment variable; the APK must never be built with an empty registration key.')
+}
 
 repositories {
     mavenLocal()
@@ -114,6 +117,16 @@ dependencies {
     implementation "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.3.9"
     implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.3.9"
     implementation 'com.google.android.gms:play-services:11.8.0'
+    // Open map renderer. Tile source is configured by MissionMapConfiguration, not this dependency.
+    // Compatible with this legacy AGP/Kotlin toolchain and Maven Central dependencies.
+    implementation('org.maplibre.gl:android-sdk:9.5.0') {
+        // The DJI sample pins Google Play Services 11.8. MapLibre's optional place-report
+        // and Android-location dependencies are not used by the planner: aircraft and Home
+        // coordinates come from DJI flight state. Keeping the sample's 11.8 set avoids
+        // duplicate Places classes from the 16.x location dependency.
+        exclude group: 'com.google.android.gms', module: 'play-services-location'
+        exclude group: 'com.google.android.gms', module: 'play-services-places-placereport'
+    }
 
     implementation 'androidx.lifecycle:lifecycle-common-java8:2.3.1'
     implementation 'androidx.lifecycle:lifecycle-runtime:2.3.1'

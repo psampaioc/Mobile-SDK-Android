@@ -69,7 +69,6 @@ public class LookAtMissionView extends LinearLayout implements View.OnClickListe
     private VideoFeedView primaryVideoFeed;
     private OverLayerTopView overLayerTopView;
 
-    private VideoFeeder.PhysicalSourceListener sourceListener;
     private CameraVideoStreamSource.Callback videoStreamSourceCallback;
     private LaserMeasureInformation.Callback laserCallback;
 
@@ -147,16 +146,10 @@ public class LookAtMissionView extends LinearLayout implements View.OnClickListe
             }
         }
 
-        sourceListener = (videoFeed, physicalSource) -> {
-            if (videoFeed == VideoFeeder.getInstance().getPrimaryVideoFeed()) {
-                String message = "Change Source To " + physicalSource;
-                ViewHelper.showToast(this.getContext(), message);
-            }
-        };
-
         primaryVideoFeed.registerLiveVideo(VideoFeeder.getInstance().getPrimaryVideoFeed(), true);
+        primaryVideoFeed.setSourceListener(physicalSource ->
+                ViewHelper.showToast(this.getContext(), "Change Source To " + physicalSource));
         ToastUtils.setResultToText(curPhysicalSource, VideoFeeder.getInstance().getPrimaryVideoFeed().getVideoSource().name());
-        VideoFeeder.getInstance().addPhysicalSourceListener(sourceListener);
 
         videoStreamSourceCallback = (videoStreamSource) -> {
             String message = "Cur Source: " + videoStreamSource.name();

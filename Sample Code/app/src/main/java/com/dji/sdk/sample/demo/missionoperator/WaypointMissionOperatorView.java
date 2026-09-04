@@ -6,6 +6,8 @@ import android.view.View;
 
 import com.dji.sdk.sample.R;
 import com.dji.sdk.sample.demo.missionmanager.MissionBaseView;
+import com.dji.sdk.sample.djihub.CallbackMulticaster;
+import com.dji.sdk.sample.djihub.DjiDataHub;
 import com.dji.sdk.sample.internal.controller.DJISampleApplication;
 import com.dji.sdk.sample.internal.utils.ToastUtils;
 
@@ -62,6 +64,7 @@ public class WaypointMissionOperatorView extends MissionBaseView {
 
     private WaypointMissionOperator waypointMissionOperator = null;
     private FlightController flightController = null;
+    private CallbackMulticaster.Subscription hubSubscription;
     private WaypointMission mission = null;
     private WaypointMissionOperatorListener listener;
     private float calculateTotalTime = 0.0f;
@@ -185,21 +188,11 @@ public class WaypointMissionOperatorView extends MissionBaseView {
                 flightController = ((Aircraft) product).getFlightController();
             }
             if (flightController != null) {
-                flightController.setStateCallback(new FlightControllerState.Callback() {
-                    @Override
-                    public void onUpdate(@NonNull FlightControllerState flightControllerState) {
+                hubSubscription = DjiDataHub.getInstance().addListener(new DjiDataHub.Listener() {
+                    @Override public void onFlightState(@NonNull FlightControllerState flightControllerState) {
                         homeLatitude = flightControllerState.getHomeLocation().getLatitude();
                         homeLongitude = flightControllerState.getHomeLocation().getLongitude();
                         flightState = flightControllerState.getFlightMode();
-
-                        if (flightControllerState.isLandingConfirmationNeeded()) {
-                            flightController.confirmLanding(new CommonCallbacks.CompletionCallback() {
-                                @Override
-                                public void onResult(DJIError djiError) {
-                                    ToastUtils.setResultToToast(djiError == null ? "confirmLanding OK" : djiError.getDescription());
-                                }
-                            });
-                        }
 
                         updateWaypointMissionState();
                     }
@@ -215,8 +208,9 @@ public class WaypointMissionOperatorView extends MissionBaseView {
         tearDownListener();
         if (flightController != null) {
             flightController.getSimulator().stop(null);
-            flightController.setStateCallback(null);
         }
+        if (hubSubscription != null) hubSubscription.close();
+        hubSubscription = null;
         super.onDetachedFromWindow();
     }
 

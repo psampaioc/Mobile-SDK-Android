@@ -9,6 +9,8 @@ import android.widget.RelativeLayout;
 import android.widget.TextView;
 
 import com.dji.sdk.sample.internal.controller.DJISampleApplication;
+import com.dji.sdk.sample.djihub.CallbackMulticaster;
+import com.dji.sdk.sample.djihub.DjiDataHub;
 import com.dji.sdk.sample.internal.utils.ModuleVerificationUtil;
 import com.dji.sdk.sample.internal.utils.ToastUtils;
 import com.dji.sdk.sample.internal.view.PresentableView;
@@ -32,6 +34,7 @@ public class NetworkRTKView extends RelativeLayout implements View.OnClickListen
     private Button startNetworkServiceBtn;
 
     private RTK rtk = null;
+    private CallbackMulticaster.Subscription hubSubscription;
     private boolean isNetowrkRTKSet = false;
     private boolean isCoordinateSystemSet = false;
 
@@ -46,9 +49,8 @@ public class NetworkRTKView extends RelativeLayout implements View.OnClickListen
         super.onAttachedToWindow();
         try {
             if (ModuleVerificationUtil.isRTKAvailable()) {
-                rtk.setStateCallback(new RTKState.Callback() {
-                    @Override
-                    public void onUpdate(@NonNull RTKState rtkState) {
+                hubSubscription = DjiDataHub.getInstance().addListener(new DjiDataHub.Listener() {
+                    @Override public void onRtkState(@NonNull RTKState rtkState) {
                         String rtkStateBoard = "";
                         rtkStateBoard += "Positioning solution: " + rtkState.getPositioningSolution().name() + "\n";
                         rtkStateBoard += "is RTK being used: " + rtkState.isRTKBeingUsed() + "\n";
@@ -68,6 +70,8 @@ public class NetworkRTKView extends RelativeLayout implements View.OnClickListen
 
     @Override
     protected void onDetachedFromWindow() {
+        if (hubSubscription != null) hubSubscription.close();
+        hubSubscription = null;
         super.onDetachedFromWindow();
     }
 

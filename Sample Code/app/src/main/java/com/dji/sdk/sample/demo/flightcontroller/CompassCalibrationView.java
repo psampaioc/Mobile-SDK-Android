@@ -5,6 +5,8 @@ import android.content.Context;
 import androidx.annotation.NonNull;
 
 import com.dji.sdk.sample.R;
+import com.dji.sdk.sample.djihub.CallbackMulticaster;
+import com.dji.sdk.sample.djihub.DjiDataHub;
 import com.dji.sdk.sample.internal.controller.DJISampleApplication;
 import com.dji.sdk.sample.internal.utils.ModuleVerificationUtil;
 import com.dji.sdk.sample.internal.view.BaseThreeBtnView;
@@ -22,6 +24,7 @@ import dji.sdk.products.Aircraft;
 public class CompassCalibrationView extends BaseThreeBtnView {
 
     private Compass compass;
+    private CallbackMulticaster.Subscription hubSubscription;
 
     public CompassCalibrationView(Context context) {
         super(context);
@@ -35,9 +38,8 @@ public class CompassCalibrationView extends BaseThreeBtnView {
             FlightController flightController =
                 ((Aircraft) DJISampleApplication.getProductInstance()).getFlightController();
 
-            flightController.setStateCallback(new FlightControllerState.Callback() {
-                @Override
-                public void onUpdate(@NonNull FlightControllerState djiFlightControllerCurrentState) {
+            hubSubscription = DjiDataHub.getInstance().addListener(new DjiDataHub.Listener() {
+                @Override public void onFlightState(@NonNull FlightControllerState djiFlightControllerCurrentState) {
                     if (null != compass) {
                         String description =
                             "CalibrationStatus: " + compass.getCalibrationState() + "\n"
@@ -57,9 +59,8 @@ public class CompassCalibrationView extends BaseThreeBtnView {
     @Override
     protected void onDetachedFromWindow() {
         super.onDetachedFromWindow();
-        if(ModuleVerificationUtil.isFlightControllerAvailable()) {
-            ((Aircraft) DJISampleApplication.getProductInstance()).getFlightController().setStateCallback(null);
-        }
+        if (hubSubscription != null) hubSubscription.close();
+        hubSubscription = null;
     }
 
     @Override

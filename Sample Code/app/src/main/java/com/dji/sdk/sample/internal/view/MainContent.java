@@ -33,6 +33,10 @@ import com.dji.sdk.sample.internal.model.ViewWrapper;
 import com.dji.sdk.sample.internal.utils.DialogUtils;
 import com.dji.sdk.sample.internal.utils.GeneralUtils;
 import com.dji.sdk.sample.internal.utils.ToastUtils;
+import com.dji.sdk.sample.operate.OperateMvpView;
+import com.dji.sdk.sample.djihub.DjiDataHub;
+import com.dji.sdk.sample.transport.TransportSessionManager;
+import com.dji.sdk.sample.transport.TransportForegroundService;
 import com.squareup.otto.Subscribe;
 
 import java.util.ArrayList;
@@ -79,6 +83,7 @@ public class MainContent extends RelativeLayout {
         @Override
         public void onConnectivityChange(boolean isConnected) {
             Log.d(TAG, "onComponentConnectivityChanged: " + isConnected);
+            refreshDjiDataHub(DJISDKManager.getInstance().getProduct());
             notifyStatusChange();
         }
     };
@@ -91,8 +96,8 @@ public class MainContent extends RelativeLayout {
     private Button getmBtnRegisterAppForLDM;
     private Button mBtnOpen;
     private Button mBtnBluetooth;
-    private ViewWrapper componentList =
-            new ViewWrapper(new DemoListView(getContext()), R.string.activity_component_list);
+    private ViewWrapper operateView =
+            new ViewWrapper(new OperateMvpView(getContext()), R.string.operate_menu_operate);
     private ViewWrapper bluetoothView;
     private EditText mBridgeModeEditText;
     private CheckBox mCheckboxFirmware;
@@ -128,6 +133,7 @@ public class MainContent extends RelativeLayout {
                     Manifest.permission.BLUETOOTH, // Bluetooth connected products
                     Manifest.permission.BLUETOOTH_ADMIN, // Bluetooth connected products
                     Manifest.permission.READ_PHONE_STATE, // Device UUID accessed upon registration
+                    Manifest.permission.POST_NOTIFICATIONS, // Persistent transport notification
                     Manifest.permission.RECORD_AUDIO,// Speaker accessory
             };
         } else {//兼容Android 12
@@ -196,7 +202,7 @@ public class MainContent extends RelativeLayout {
                 if (GeneralUtils.isFastDoubleClick()) {
                     return;
                 }
-                DJISampleApplication.getEventBus().post(componentList);
+                DJISampleApplication.getEventBus().post(operateView);
             }
         });
         mBtnBluetooth.setOnClickListener(new OnClickListener() {
@@ -532,17 +538,20 @@ public class MainContent extends RelativeLayout {
                             @Override
                             public void onProductDisconnect() {
                                 Log.d(TAG, "onProductDisconnect");
+                                DjiDataHub.getInstance().stop();
                                 notifyStatusChange();
                             }
 
                             @Override
                             public void onProductConnect(BaseProduct baseProduct) {
                                 Log.d(TAG, String.format("onProductConnect newProduct:%s", baseProduct));
+                                reconcileDjiDataHub(baseProduct);
                                 notifyStatusChange();
                             }
 
                             @Override
                             public void onProductChanged(BaseProduct baseProduct) {
+                                reconcileDjiDataHub(baseProduct);
                                 notifyStatusChange();
                             }
 
@@ -562,7 +571,7 @@ public class MainContent extends RelativeLayout {
                                                 componentKey,
                                                 oldComponent,
                                                 newComponent));
-
+                                refreshDjiDataHub(DJISDKManager.getInstance().getProduct());
                                 notifyStatusChange();
                             }
 
@@ -605,17 +614,20 @@ public class MainContent extends RelativeLayout {
                             @Override
                             public void onProductDisconnect() {
                                 Log.d(TAG, "onProductDisconnect");
+                                DjiDataHub.getInstance().stop();
                                 notifyStatusChange();
                             }
 
                             @Override
                             public void onProductConnect(BaseProduct baseProduct) {
                                 Log.d(TAG, String.format("onProductConnect newProduct:%s", baseProduct));
+                                reconcileDjiDataHub(baseProduct);
                                 notifyStatusChange();
                             }
 
                             @Override
                             public void onProductChanged(BaseProduct baseProduct) {
+                                reconcileDjiDataHub(baseProduct);
                                 notifyStatusChange();
                             }
 
@@ -635,7 +647,7 @@ public class MainContent extends RelativeLayout {
                                                 componentKey,
                                                 oldComponent,
                                                 newComponent));
-
+                                refreshDjiDataHub(DJISDKManager.getInstance().getProduct());
                                 notifyStatusChange();
                             }
 
@@ -708,6 +720,69 @@ public class MainContent extends RelativeLayout {
                 progressBar.setVisibility(View.GONE);
             }
         });
+    }
+
+    /** MainContent receives DJI product/component lifecycle events and keeps hub bindings current. */
+    private void reconcileDjiDataHub(BaseProduct product) {
+        DjiDataHub hub = DjiDataHub.getInstance();
+        if (product instanceof Aircraft && product.isConnected()) {
+            Aircraft aircraft = (Aircraft) product;
+            attachDjiComponentListeners(aircraft);
+            hub.start(aircraft);
+            reconcileTransport(aircraft);
+        } else {
+            hub.stop();
+            reconcileTransport(null);
+        }
+    }
+
+    private void refreshDjiDataHub(BaseProduct product) {
+        DjiDataHub hub = DjiDataHub.getInstance();
+        if (product instanceof Aircraft && product.isConnected()) {
+            Aircraft aircraft = (Aircraft) product;
+            attachDjiComponentListeners(aircraft);
+            hub.refresh(aircraft);
+            reconcileTransport(aircraft);
+        } else {
+            hub.stop();
+            reconcileTransport(null);
+        }
+    }
+
+    /**
+     * Keeps a selected Edge endpoint alive across navigation and product/component changes.
+     * DJI callbacks remain solely owned by {@link DjiDataHub}; this only owns the passive
+     * transport runtime lifecycle.
+     */
+    private void reconcileTransport(final Aircraft aircraft) {
+        mHander.post(new Runnable() {
+            @Override public void run() {
+                try {
+                    if (MainActivity.isAppInForeground()
+                            && TransportSessionManager.hasSelectedEndpoint(getContext())) {
+                        TransportForegroundService.startForSelectedEndpoint(getContext());
+                    }
+                    TransportSessionManager.getInstance().reconcile(getContext(), aircraft);
+                } catch (Exception error) {
+                    Log.w(TAG, "Unable to reconcile selected transport endpoint", error);
+                }
+            }
+        });
+    }
+
+    /** Ensures existing components notify the hub when they connect after the product does. */
+    private void attachDjiComponentListeners(Aircraft aircraft) {
+        attachDjiComponentListener(aircraft.getFlightController());
+        if (aircraft.getGimbals() != null) for (BaseComponent component : aircraft.getGimbals()) {
+            attachDjiComponentListener(component);
+        }
+        if (aircraft.getBatteries() != null) for (BaseComponent component : aircraft.getBatteries()) {
+            attachDjiComponentListener(component);
+        }
+    }
+
+    private void attachDjiComponentListener(BaseComponent component) {
+        if (component != null) component.setComponentListener(mDJIComponentListener);
     }
 
     private void notifyStatusChange() {

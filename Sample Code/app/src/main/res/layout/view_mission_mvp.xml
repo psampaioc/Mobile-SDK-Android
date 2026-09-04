@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent" android:background="#E8F3FA" android:orientation="horizontal" android:padding="11dp">
+    <FrameLayout android:id="@+id/mission_mvp_map" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:background="#D8EAF4">
+        <Button android:id="@+id/mission_mvp_center" android:layout_width="52dp" android:layout_height="52dp" android:layout_gravity="bottom|end" android:layout_margin="18dp" android:background="@drawable/mission_map_center_button" android:contentDescription="Center map on my location" android:drawableTop="@drawable/ic_mission_my_location" android:padding="12dp" />
+    </FrameLayout>
+    <LinearLayout android:layout_width="280dp" android:layout_height="match_parent" android:layout_marginStart="10dp" android:background="#F7FBFE" android:orientation="vertical">
+        <ScrollView android:layout_width="match_parent" android:layout_height="match_parent" android:fillViewport="true" android:scrollbars="vertical">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="12dp">
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="MISSION" android:textColor="#162A36" android:textSize="20sp" />
+                <TextView android:id="@+id/mission_mvp_home" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:text="HOME UNAVAILABLE" android:textColor="#667B87" android:textSize="11sp" />
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:text="MISSION NAME" android:textColor="#667B87" android:textSize="10sp" />
+                <EditText android:id="@+id/mission_mvp_name" android:layout_width="match_parent" android:layout_height="42dp" android:contentDescription="Mission name" android:singleLine="true" android:textSize="16sp" />
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:orientation="horizontal">
+                    <Button android:id="@+id/mission_mvp_add" android:layout_width="0dp" android:layout_height="38dp" android:layout_weight="1" android:background="@drawable/operate_mvp_button" android:text="ADD WAYPOINT" android:textColor="#162A36" android:textSize="10sp" />
+                    <Button android:id="@+id/mission_mvp_delete" android:layout_width="0dp" android:layout_height="38dp" android:layout_marginStart="6dp" android:layout_weight="1" android:background="@drawable/operate_mvp_button" android:text="DELETE" android:textColor="#162A36" android:textSize="10sp" />
+                </LinearLayout>
+                <TextView android:id="@+id/mission_mvp_route" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:text="ROUTE — 0 WAYPOINTS" android:textColor="#162A36" android:textSize="12sp" />
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:text="DEFAULT ALTITUDE (m)" android:textColor="#667B87" android:textSize="10sp" />
+                <EditText android:id="@+id/mission_mvp_altitude" android:layout_width="match_parent" android:layout_height="40dp" android:contentDescription="Default altitude in metres" android:inputType="numberDecimal" android:text="30" android:textSize="16sp" />
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:text="SPEED (m/s)" android:textColor="#667B87" android:textSize="10sp" />
+                <EditText android:id="@+id/mission_mvp_speed" android:layout_width="match_parent" android:layout_height="40dp" android:contentDescription="Mission speed in metres per second" android:inputType="numberDecimal" android:text="3" android:textSize="16sp" />
+                <Spinner android:id="@+id/mission_mvp_finish" android:layout_width="match_parent" android:layout_height="40dp" android:layout_marginTop="4dp" />
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:gravity="center" android:orientation="vertical">
+                    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center" android:text="SAVED MISSIONS" android:textColor="#667B87" android:textSize="10sp" />
+                    <ImageButton android:id="@+id/mission_mvp_library" android:layout_width="42dp" android:layout_height="38dp" android:layout_marginTop="2dp" android:background="@drawable/operate_mvp_button" android:contentDescription="Open saved missions" android:padding="8dp" android:src="@drawable/ic_mission_folder" />
+                </LinearLayout>
+                <Button android:id="@+id/mission_mvp_save" android:layout_width="match_parent" android:layout_height="38dp" android:layout_marginTop="6dp" android:background="@drawable/operate_mvp_button" android:text="SAVE DRAFT" android:textColor="#162A36" android:textSize="10sp" />
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:orientation="horizontal">
+                    <Button android:id="@+id/mission_mvp_load" android:layout_width="0dp" android:layout_height="38dp" android:layout_weight="1" android:background="@drawable/operate_mvp_button" android:text="LOAD" android:textColor="#162A36" android:textSize="10sp" />
+                    <Button android:id="@+id/mission_mvp_upload" android:layout_width="0dp" android:layout_height="38dp" android:layout_marginStart="6dp" android:layout_weight="1" android:background="@drawable/operate_mvp_button" android:text="UPLOAD" android:textColor="#162A36" android:textSize="10sp" />
+                </LinearLayout>
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:orientation="horizontal">
+                    <Button android:id="@+id/mission_mvp_start" android:layout_width="0dp" android:layout_height="38dp" android:layout_weight="1" android:background="@drawable/operate_mvp_button" android:text="START" android:textColor="#162A36" android:textSize="10sp" />
+                    <Button android:id="@+id/mission_mvp_pause" android:layout_width="0dp" android:layout_height="38dp" android:layout_marginStart="6dp" android:layout_weight="1" android:background="@drawable/operate_mvp_button" android:text="PAUSE" android:textColor="#162A36" android:textSize="10sp" />
+                    <Button android:id="@+id/mission_mvp_cancel" android:layout_width="0dp" android:layout_height="38dp" android:layout_marginStart="6dp" android:layout_weight="1" android:background="@drawable/operate_mvp_button" android:text="CANCEL" android:textColor="#162A36" android:textSize="10sp" />
+                </LinearLayout>
+                <TextView android:id="@+id/mission_mvp_status" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:paddingBottom="8dp" android:textColor="#162A36" android:textSize="12sp" />
+            </LinearLayout>
+        </ScrollView>
+    </LinearLayout>
+</LinearLayout>

@@ -5,6 +5,8 @@ import android.content.Context;
 import androidx.annotation.NonNull;
 
 import com.dji.sdk.sample.R;
+import com.dji.sdk.sample.djihub.CallbackMulticaster;
+import com.dji.sdk.sample.djihub.DjiDataHub;
 import com.dji.sdk.sample.internal.controller.DJISampleApplication;
 import com.dji.sdk.sample.internal.utils.ModuleVerificationUtil;
 import com.dji.sdk.sample.internal.utils.ToastUtils;
@@ -26,6 +28,7 @@ public class OrientationModeView extends BaseThreeBtnView {
     private FlightController flightController;
 
     private String orientationMode;
+    private CallbackMulticaster.Subscription hubSubscription;
 
     public OrientationModeView(Context context) {
         super(context);
@@ -38,9 +41,8 @@ public class OrientationModeView extends BaseThreeBtnView {
         if (ModuleVerificationUtil.isFlightControllerAvailable()) {
             flightController = DJISampleApplication.getAircraftInstance().getFlightController();
 
-            flightController.setStateCallback(new FlightControllerState.Callback() {
-                @Override
-                public void onUpdate(@NonNull FlightControllerState flightControllerState) {
+            hubSubscription = DjiDataHub.getInstance().addListener(new DjiDataHub.Listener() {
+                @Override public void onFlightState(@NonNull FlightControllerState flightControllerState) {
                     orientationMode = flightControllerState.getOrientationMode().name();
                     changeDescription("Current Orientation Mode is" + "\n" +
                                           orientationMode);
@@ -53,10 +55,8 @@ public class OrientationModeView extends BaseThreeBtnView {
     protected void onDetachedFromWindow() {
         super.onDetachedFromWindow();
 
-        if(ModuleVerificationUtil.isFlightControllerAvailable()) {
-            flightController = DJISampleApplication.getAircraftInstance().getFlightController();
-            flightController.setStateCallback(null);
-        }
+        if (hubSubscription != null) hubSubscription.close();
+        hubSubscription = null;
     }
 
     @Override

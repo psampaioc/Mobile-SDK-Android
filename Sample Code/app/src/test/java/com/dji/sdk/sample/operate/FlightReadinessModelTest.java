@@ -10,6 +10,7 @@ public final class FlightReadinessModelTest {
         batterySeverityChangesTheMissionDecision();
         rtkIsAdvisoryUnlessTheMissionRequiresIt();
         specificReasonsRemainVisible();
+        landingAdvisoryUsesConfiguredThresholdAndLowestPack();
         System.out.println("Flight readiness model tests passed");
     }
 
@@ -71,6 +72,24 @@ public final class FlightReadinessModelTest {
         equal(FlightReadinessModel.Reason.FLIGHT_STATE_STALE, decision.getPrimaryReason(),
                 "stale reason");
         require(!decision.getRows().isEmpty(), "presentation rows describe the decision");
+    }
+
+    private static void landingAdvisoryUsesConfiguredThresholdAndLowestPack() {
+        require(!LowBatteryAdvisory.isValidThreshold(14), "landing threshold below critical is rejected");
+        require(LowBatteryAdvisory.isValidThreshold(15), "critical threshold is allowed");
+        equal(LowBatteryAdvisory.Severity.CLEAR,
+                LowBatteryAdvisory.evaluate(31, true, 55, true, 30).getSeverity(),
+                "battery above threshold is clear");
+        LowBatteryAdvisory.Snapshot soon = LowBatteryAdvisory.evaluate(55, true, 24, true, 30);
+        equal(LowBatteryAdvisory.Severity.LAND_SOON, soon.getSeverity(), "low pack needs land-soon advisory");
+        require(soon.getLimitingBatteryIndex() == 1 && soon.getLimitingPercent() == 24,
+                "lower B2 pack is identified");
+        equal(LowBatteryAdvisory.Severity.LAND_NOW,
+                LowBatteryAdvisory.evaluate(15, true, 40, true, 30).getSeverity(),
+                "critical pack uses land-now advisory");
+        equal(LowBatteryAdvisory.Severity.UNAVAILABLE,
+                LowBatteryAdvisory.evaluate(60, false, 60, true, 30).getSeverity(),
+                "stale battery evidence is never healthy");
     }
 
     private static FlightReadinessModel.Input healthyInput(boolean physicalReviewComplete) {

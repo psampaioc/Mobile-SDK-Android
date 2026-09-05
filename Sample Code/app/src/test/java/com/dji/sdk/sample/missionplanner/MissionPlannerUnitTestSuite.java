@@ -16,6 +16,7 @@ public final class MissionPlannerUnitTestSuite {
         editsOrderedRouteWithoutChangingDefaults();
         reordersSelectedWaypointWithoutChangingIt();
         distinguishesLocalAndRemoteMissionEvidence();
+        invalidatesUploadEvidenceWhenAircraftSessionChanges();
         calculatesRouteStatisticsFromLocalDraft();
         detectsCircleAndPolygonBoundaryWarnings();
         ignoresDisjointCollinearBoundarySegments();
@@ -106,6 +107,17 @@ public final class MissionPlannerUnitTestSuite {
         MissionSyncState.Snapshot executing = MissionSyncState.resolve(false, false, false, "EXECUTING");
         require(executing.getRemote() == MissionSyncState.Remote.EXECUTING,
                 "DJI execution state is remote evidence");
+    }
+
+    private static void invalidatesUploadEvidenceWhenAircraftSessionChanges() {
+        MissionSessionEvidence evidence = new MissionSessionEvidence();
+        evidence.recordLoaded(7L);
+        require(evidence.recordUploaded(7L), "an upload after Load belongs to the current aircraft session");
+        require(evidence.isUploadedFor(7L), "current-session upload evidence must be visible");
+        require(evidence.invalidateFor(8L), "a reconnect must invalidate local mission evidence");
+        require(!evidence.isLoadedFor(8L) && !evidence.isUploadedFor(8L),
+                "a reconnect must require a fresh Load and Upload");
+        require(!evidence.recordUploaded(7L), "a late upload completion from the old session is rejected");
     }
 
     private static void calculatesRouteStatisticsFromLocalDraft() {
@@ -200,6 +212,10 @@ public final class MissionPlannerUnitTestSuite {
         require(replaced.getBoundaries().get(0) == first && replaced.getBoundaries().get(1) == replacement
                         && replaced.getBoundaries().get(2) == third,
                 "replace must change only the selected boundary");
+        require("First".equals(replaced.getBoundaries().get(0).getName())
+                        && "Replacement".equals(replaced.getBoundaries().get(1).getName())
+                        && "Third".equals(replaced.getBoundaries().get(2).getName()),
+                "individually named boundaries must retain their own names after an edit");
         PlanningBoundaryProfile deleted = replaced.withBoundaryDeleted(1);
         require(deleted.getBoundaries().size() == 2 && deleted.getBoundaries().get(0) == first
                         && deleted.getBoundaries().get(1) == third,

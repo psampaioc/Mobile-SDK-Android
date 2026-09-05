@@ -20,6 +20,7 @@ public final class TelemetryDiagnosticsUnitTestSuite {
         CallbackRateTrackerTest.run();
         TelemetryEventJsonTest.run();
         AsyncNdjsonDiagnosticWriterTest.run();
+        SessionTimelineDiagnosticTest.run();
         JsonWireEncoderTest.run();
         ClockProtocolTest.run();
         System.out.println("Telemetry diagnostics unit tests passed");

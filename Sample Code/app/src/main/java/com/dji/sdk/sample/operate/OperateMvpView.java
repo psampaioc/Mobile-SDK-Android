@@ -14,6 +14,7 @@ import android.view.MotionEvent;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -89,6 +90,7 @@ public final class OperateMvpView extends LinearLayout implements PresentableVie
     private final TextView rcBatteryStatus;
     private final TextView batteryOneStatus;
     private final TextView batteryTwoStatus;
+    private final TextView landingAdvisory;
     private final TextView detailTitle;
     private final TextView detailBody;
     private final LinearLayout detailChecklist;
@@ -142,6 +144,8 @@ public final class OperateMvpView extends LinearLayout implements PresentableVie
     private String connectionDetail = "--";
     private String positioningDetail = "--";
     private String powerDetail = "--";
+    private final LowBatteryAdvisoryPreferences lowBatteryPreferences;
+    private LowBatteryAdvisory.Severity lastLandingAdvisorySeverity;
 
     private final Runnable videoHealthCheck = new Runnable() {
         @Override public void run() {
@@ -159,6 +163,7 @@ public final class OperateMvpView extends LinearLayout implements PresentableVie
         // touches here so they cannot activate a demo that is visually behind Operate.
         setClickable(true);
         LayoutInflater.from(context).inflate(R.layout.view_operate_mvp, this, true);
+        lowBatteryPreferences = new LowBatteryAdvisoryPreferences(context);
 
         operatorMenu = findViewById(R.id.operate_mvp_menu_panel);
         sourcePanel = findViewById(R.id.operate_mvp_source_panel);
@@ -179,6 +184,7 @@ public final class OperateMvpView extends LinearLayout implements PresentableVie
         rcBatteryStatus = findViewById(R.id.operate_mvp_rc_battery_status);
         batteryOneStatus = findViewById(R.id.operate_mvp_battery_one_status);
         batteryTwoStatus = findViewById(R.id.operate_mvp_battery_two_status);
+        landingAdvisory = findViewById(R.id.operate_mvp_landing_advisory);
         detailTitle = findViewById(R.id.operate_mvp_detail_title);
         detailBody = findViewById(R.id.operate_mvp_detail_body);
         detailChecklist = findViewById(R.id.operate_mvp_detail_checklist);
@@ -389,16 +395,48 @@ public final class OperateMvpView extends LinearLayout implements PresentableVie
             activity.onBackPressed();
             activity.onBackPressed();
         } else if (destination == Destination.SETTINGS) {
-            TextView settings = new TextView(getContext());
-            settings.setText("SETTINGS\n\nThis MVP keeps connection and video status in the header. Additional settings are not configured yet.");
-            settings.setTextColor(0xFF162A36);
-            settings.setTextSize(18f);
-            settings.setPadding(32, 32, 32, 32);
-            settings.setBackgroundColor(0xFFE8F3FA);
-            showPage(settings);
+            showPage(createSettingsPage());
         } else if (destination == Destination.DEMOS && getContext() instanceof MainActivity) {
             ((MainActivity) getContext()).showSampleDemos();
         }
+    }
+
+    private View createSettingsPage() {
+        ScrollView scroll = new ScrollView(getContext());
+        LinearLayout content = new LinearLayout(getContext());
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(26), dp(22), dp(26), dp(22));
+        content.setBackgroundColor(0xFFE8F3FA);
+        TextView title = new TextView(getContext());
+        title.setText("SETTINGS"); title.setTextSize(20f); title.setTextColor(0xFF162A36);
+        content.addView(title);
+        TextView label = new TextView(getContext());
+        label.setText("LANDING ADVISORY THRESHOLD (%)"); label.setTextSize(12f); label.setTextColor(0xFF667B87);
+        label.setPadding(0, dp(22), 0, dp(4)); content.addView(label);
+        EditText threshold = new EditText(getContext());
+        threshold.setSingleLine(true); threshold.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        threshold.setText(String.valueOf(lowBatteryPreferences.getThresholdPercent()));
+        content.addView(threshold, new LinearLayout.LayoutParams(dp(150), LinearLayout.LayoutParams.WRAP_CONTENT));
+        TextView helper = new TextView(getContext());
+        helper.setText("Valid range: 15–100%. Default: 30%.\nApp advisory only — DJI battery protection and flight behavior are unchanged.");
+        helper.setTextSize(12f); helper.setTextColor(0xFF667B87); helper.setPadding(0, dp(8), 0, dp(14));
+        content.addView(helper);
+        Button save = new Button(getContext()); save.setText("SAVE LOCAL SETTING");
+        save.setOnClickListener(view -> {
+            try {
+                int value = Integer.parseInt(threshold.getText().toString().trim());
+                if (!lowBatteryPreferences.saveThresholdPercent(value)) {
+                    helper.setText("Enter a whole number from 15 to 100. The saved setting was not changed.");
+                    return;
+                }
+                helper.setText("Saved locally. App advisory only — DJI battery protection and flight behavior are unchanged.");
+                renderStatusOnMain();
+            } catch (NumberFormatException error) {
+                helper.setText("Enter a whole number from 15 to 100. The saved setting was not changed.");
+            }
+        });
+        content.addView(save, new LinearLayout.LayoutParams(dp(220), LinearLayout.LayoutParams.WRAP_CONTENT));
+        scroll.addView(content); return scroll;
     }
 
     private static void toggle(View panel) {
@@ -753,6 +791,13 @@ public final class OperateMvpView extends LinearLayout implements PresentableVie
         BatteryState batteryTwo = batteryAt(1);
         renderAircraftBattery(batteryOneStatus, "B1", 0, batteryOne, now);
         renderAircraftBattery(batteryTwoStatus, "B2", 1, batteryTwo, now);
+        LowBatteryAdvisory.Snapshot advisory = LowBatteryAdvisory.evaluate(
+                batteryOne == null ? -1 : batteryOne.getChargeRemainingInPercent(),
+                batterySeverity(0, batteryOne, now) == OperateStatusModel.Severity.HEALTHY,
+                batteryTwo == null ? -1 : batteryTwo.getChargeRemainingInPercent(),
+                batterySeverity(1, batteryTwo, now) == OperateStatusModel.Severity.HEALTHY,
+                lowBatteryPreferences.getThresholdPercent());
+        renderLandingAdvisory(advisory);
 
         boolean aircraftConnected = "AIRCRAFT OK".equals(aircraftStatus.getText().toString());
         boolean connectionAttentionNeeded = aircraftConnected
@@ -779,12 +824,29 @@ public final class OperateMvpView extends LinearLayout implements PresentableVie
                 rtkStatus.getText(), gpsStatus.getText(), flightState != null && flightState.isHomeLocationSet()
                         ? "SET" : "NOT SET OR NOT RECEIVED");
         powerDetail = String.format(Locale.US,
-                "Cendence battery\n%s\n%s\n\nDrone battery 1 (DJI pack 0)\n%s\n\nDrone battery 2 (DJI pack 1)\n%s",
+                "Landing advisory (app only)\n%s\nThreshold %d%% · DJI protection unchanged\n\nCendence battery\n%s\n%s\n\nDrone battery 1 (DJI pack 0)\n%s\n\nDrone battery 2 (DJI pack 1)\n%s",
+                advisory.render(), lowBatteryPreferences.getThresholdPercent(),
                 rcBatteryStatus.getText(), rcBattery == null ? "NO LIVE SAMPLE" : String.format(Locale.US,
                         "%d mAh · %s", rcBattery.getRemainingChargeInmAh(),
                         rcBattery.isCharging() ? "CHARGING" : "NOT CHARGING"),
                 batteryDetail(batteryOne, 0, now), batteryDetail(batteryTwo, 1, now));
         renderExpandedDetail();
+    }
+
+    private void renderLandingAdvisory(@NonNull LowBatteryAdvisory.Snapshot advisory) {
+        LowBatteryAdvisory.Severity severity = advisory.getSeverity();
+        landingAdvisory.setVisibility(severity == LowBatteryAdvisory.Severity.CLEAR ? GONE : VISIBLE);
+        landingAdvisory.setText(severity == LowBatteryAdvisory.Severity.LAND_NOW ? "LAND NOW\nB"
+                + (advisory.getLimitingBatteryIndex() + 1) + " " + advisory.getLimitingPercent() + "%"
+                : severity == LowBatteryAdvisory.Severity.LAND_SOON ? "LAND SOON\nB"
+                + (advisory.getLimitingBatteryIndex() + 1) + " " + advisory.getLimitingPercent() + "%"
+                : "BATTERY\nUNAVAILABLE");
+        landingAdvisory.setTextColor(severity == LowBatteryAdvisory.Severity.LAND_NOW ? 0xFFFF3145
+                : severity == LowBatteryAdvisory.Severity.LAND_SOON ? 0xFFE29A22 : 0xFF667B87);
+        if (severity != lastLandingAdvisorySeverity) {
+            SessionTimelineStore.android("BATTERY_LANDING_ADVISORY", advisory.render());
+            lastLandingAdvisorySeverity = severity;
+        }
     }
 
     private BatteryState batteryAt(int index) {

@@ -38,6 +38,7 @@ import com.dji.sdk.sample.missionplanner.MissionDraftValidator;
 import com.dji.sdk.sample.missionplanner.MissionRouteEditor;
 import com.dji.sdk.sample.missionplanner.MissionPreflight;
 import com.dji.sdk.sample.missionplanner.MissionSyncState;
+import com.dji.sdk.sample.missionplanner.MissionSessionEvidence;
 import com.dji.sdk.sample.missionplanner.RouteStatistics;
 import com.dji.sdk.sample.missionplanner.BoundaryEvaluator;
 import com.dji.sdk.sample.missionplanner.PlanningBoundaryProfile;
@@ -80,12 +81,13 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
     private final MapLibreMissionMapView map;
     private WaypointMission loadedMission;
     private MissionDraft loadedDraft;
-    private boolean uploaded;
+    private final MissionSessionEvidence missionEvidence = new MissionSessionEvidence();
     private boolean draftDirty;
     private PlanningBoundaryProfile activeBoundaryProfile;
     private boolean addMode;
     private int selectedWaypoint = -1;
     private CallbackMulticaster.Subscription hubSubscription;
+    private CallbackMulticaster.Subscription readinessSubscription;
     private boolean rthActive;
     private boolean flightStateAvailable;
     private boolean homeAvailable;
@@ -221,15 +223,16 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
             SessionTimelineStore.android("MISSION_LOAD_RESULT", error == null ? "Mission loaded locally" : error.getDescription());
             status.setText(error == null ? String.format(Locale.US, "Loaded %d waypoints. Upload is now available.", count)
                     : "Load failed: " + error.getDescription());
-            uploaded = false;
             loadedMission = error == null ? candidate : null;
             loadedDraft = error == null ? draft : null;
+            if (error == null) missionEvidence.recordLoaded(currentAircraftSessionGeneration());
+            else missionEvidence.clear();
             draftDirty = error != null;
             refreshRoute();
         } catch (IllegalArgumentException error) {
             loadedMission = null;
             loadedDraft = null;
-            uploaded = false;
+            missionEvidence.clear();
             status.setText("Invalid mission: " + error.getMessage());
         }
     }
@@ -240,13 +243,21 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
         if (draft == null) return;
         String preflightError = firstPreflightError(draft);
         if (preflightError != null) { status.setText("Preflight: " + preflightError); return; }
-        operator.uploadMission(error -> {
-            uploaded = error == null;
-            SessionTimelineStore.dji("MISSION_UPLOAD_RESULT", error == null ? "Upload completed" : error.getDescription());
-            status.setText(error == null ? "Upload successful. Start is now available."
-                    : "Upload failed: " + error.getDescription());
-            post(this::renderMissionSync);
-        });
+        final long requestGeneration = currentAircraftSessionGeneration();
+        operator.uploadMission(error -> post(() -> {
+            if (error == null && missionEvidence.recordUploaded(requestGeneration)) {
+                SessionTimelineStore.dji("MISSION_UPLOAD_RESULT", "Upload completed");
+                status.setText("Upload successful. Start is now available.");
+            } else if (error == null) {
+                clearLoadedMissionEvidence();
+                SessionTimelineStore.android("MISSION_UPLOAD_RESULT", "Upload result ignored after aircraft session change");
+                status.setText("Aircraft session changed. Local draft retained; LOAD and UPLOAD again.");
+            } else {
+                SessionTimelineStore.dji("MISSION_UPLOAD_RESULT", error.getDescription());
+                status.setText("Upload failed: " + error.getDescription());
+            }
+            renderMissionSync();
+        }));
     }
 
     private void download() {
@@ -262,7 +273,7 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
         operator.downloadMission(error -> post(() -> {
             SessionTimelineStore.dji("MISSION_DOWNLOAD_RESULT", error == null ? "Download request completed" : error.getDescription());
             if (error != null) status.setText("Download failed: " + error.getDescription());
-            else status.setText("Download request completed. Remote route content remains SDK-limited.");
+            else status.setText("REMOTE UNKNOWN — download completed, but DJI did not provide route contents. Local draft unchanged.");
             renderMissionSync();
         }));
     }
@@ -271,7 +282,7 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
         SessionTimelineStore.operator("MISSION_START", "Start pressed");
         if (rthActive) { status.setText("RTH is active; Start is unavailable."); return; }
         MissionDraft draft = requireCurrentLoadedDraft();
-        if (draft == null || !uploaded) {
+        if (draft == null || !missionEvidence.isUploadedFor(currentAircraftSessionGeneration())) {
             status.setText("Load and upload a mission first.");
             return;
         }
@@ -283,15 +294,22 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
             status.setText("Start blocked: " + readinessError + " Open Operate status for details.");
             return;
         }
-        operator.startMission(error -> {
+        final long requestGeneration = currentAircraftSessionGeneration();
+        operator.startMission(error -> post(() -> {
             if (error != null) {
                 SessionTimelineStore.dji("MISSION_START_RESULT", error.getDescription());
                 status.setText("Start failed: " + error.getDescription()); return;
             }
+            if (requestGeneration != currentAircraftSessionGeneration()) {
+                SessionTimelineStore.android("MISSION_START_RESULT", "Start result returned after aircraft session change");
+                status.setText("Start result returned after aircraft session changed; check aircraft state.");
+                renderMissionSync();
+                return;
+            }
             SessionTimelineStore.dji("MISSION_START_RESULT", "Start request accepted");
             status.setText("Mission started. Returning to Operate.");
             if (getContext() instanceof Activity) ((Activity) getContext()).onBackPressed();
-        });
+        }));
     }
 
     private CommonCallbacks.CompletionCallback result(final String action) {
@@ -550,9 +568,7 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
     }
 
     private void routeChanged(String message) {
-        loadedMission = null;
-        loadedDraft = null;
-        uploaded = false;
+        clearLoadedMissionEvidence();
         draftDirty = true;
         refreshRoute();
         status.setText(message);
@@ -625,9 +641,7 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
         speed.setText(String.format(Locale.US, "%.1f", draft.getBaseSpeedMetersPerSecond()));
         finish.setSelection(draft.getFinishAction().ordinal());
         selectedWaypoint = -1;
-        loadedMission = null;
-        loadedDraft = null;
-        uploaded = false;
+        clearLoadedMissionEvidence();
         draftDirty = false;
         refreshRoute();
         status.setText("Opened " + draft.getName() + ". Edit, then LOAD when ready.");
@@ -729,9 +743,12 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
     private void editBoundary(PlanningBoundaryProfile profile, int index, String type, PlanningBoundary existing) {
         LinearLayout panel = new LinearLayout(getContext()); panel.setOrientation(VERTICAL); panel.setPadding(dp(18), dp(6), dp(18), 0);
         boolean circle = type.endsWith("CIRCLE");
+        EditText boundaryName = inspectorField(existing == null ? type : existing.getName(),
+                android.text.InputType.TYPE_CLASS_TEXT);
         EditText geometry = inspectorField(existing == null ? (circle ? "lat,lon,radius_m" : "lat,lon; lat,lon; lat,lon")
                 : boundaryGeometry(existing), android.text.InputType.TYPE_CLASS_TEXT);
         panel.addView(inspectorLabel("PROFILE — " + profile.getName()));
+        panel.addView(inspectorLabel("BOUNDARY NAME")); panel.addView(boundaryName);
         panel.addView(inspectorLabel(circle ? "CENTER / RADIUS" : "POLYGON VERTICES")); panel.addView(geometry);
         AlertDialog.Builder builder = new AlertDialog.Builder(getContext()).setTitle(existing == null ? type : "EDIT " + type)
                 .setView(panel).setNegativeButton("CANCEL", null)
@@ -740,7 +757,8 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
         AlertDialog dialog = builder.create();
         dialog.setOnShowListener(ignored -> {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
-                if (saveBoundary(profile, index, type, geometry.getText().toString())) dialog.dismiss();
+                if (saveBoundary(profile, index, type, boundaryName.getText().toString(),
+                        geometry.getText().toString())) dialog.dismiss();
             });
             if (existing != null) dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(view -> {
                 dialog.dismiss();
@@ -763,14 +781,17 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
         return result.toString();
     }
 
-    private boolean saveBoundary(PlanningBoundaryProfile profile, int index, String type, String source) {
+    private boolean saveBoundary(PlanningBoundaryProfile profile, int index, String type, String name,
+            String source) {
         try {
+            String boundaryName = name == null ? "" : name.trim();
+            if (boundaryName.isEmpty()) throw new IllegalArgumentException("boundary name is required");
             boolean exclusion = type.startsWith("EXCLUSION"); PlanningBoundary.Kind kind = exclusion ? PlanningBoundary.Kind.EXCLUSION : PlanningBoundary.Kind.INCLUSION;
             PlanningBoundary boundary;
             if (type.endsWith("CIRCLE")) { String[] parts = source.split(","); if (parts.length != 3) throw new IllegalArgumentException("use lat,lon,radius_m");
-                boundary = PlanningBoundary.circle(type, kind, Double.parseDouble(parts[0].trim()), Double.parseDouble(parts[1].trim()), Double.parseDouble(parts[2].trim()));
+                boundary = PlanningBoundary.circle(boundaryName, kind, Double.parseDouble(parts[0].trim()), Double.parseDouble(parts[1].trim()), Double.parseDouble(parts[2].trim()));
             } else { java.util.List<PlanningBoundary.Point> points = new java.util.ArrayList<>(); for (String pair : source.split(";")) { String[] parts = pair.split(","); if (parts.length != 2) throw new IllegalArgumentException("use lat,lon; lat,lon; lat,lon"); points.add(new PlanningBoundary.Point(Double.parseDouble(parts[0].trim()), Double.parseDouble(parts[1].trim()))); }
-                boundary = PlanningBoundary.polygon(type, kind, points); }
+                boundary = PlanningBoundary.polygon(boundaryName, kind, points); }
             PlanningBoundaryProfile updated = index < 0 ? profile.withBoundaryAppended(boundary)
                     : profile.withBoundaryReplaced(index, boundary);
             if (!boundaryProfiles.save(updated)) throw new IllegalArgumentException("could not save profile");
@@ -866,7 +887,9 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
         if (sync == null) return;
         WaypointMissionState currentState = operator == null ? null : operator.getCurrentState();
         String stateName = currentState == null ? "" : currentState.getName();
-        sync.setText(MissionSyncState.resolve(loadedMission != null && loadedDraft != null, uploaded,
+        long generation = currentAircraftSessionGeneration();
+        sync.setText(MissionSyncState.resolve(missionEvidence.isLoadedFor(generation),
+                missionEvidence.isUploadedFor(generation),
                 draftDirty, stateName).render());
     }
 
@@ -898,7 +921,9 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
     }
 
     private MissionDraft requireCurrentLoadedDraft() {
-        if (loadedMission == null || loadedDraft == null) {
+        if (invalidateMissionEvidenceForAircraftSession(true)
+                || loadedMission == null || loadedDraft == null
+                || !missionEvidence.isLoadedFor(currentAircraftSessionGeneration())) {
             status.setText("Load a valid mission first.");
             return null;
         }
@@ -906,16 +931,12 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
         try {
             draft = currentDraft();
         } catch (IllegalArgumentException error) {
-            loadedMission = null;
-            loadedDraft = null;
-            uploaded = false;
+            clearLoadedMissionEvidence();
             status.setText("Mission changed and is invalid: " + error.getMessage());
             return null;
         }
         if (!loadedDraft.equals(draft)) {
-            loadedMission = null;
-            loadedDraft = null;
-            uploaded = false;
+            clearLoadedMissionEvidence();
             status.setText("Mission changed. Load it again before upload or start.");
             return null;
         }
@@ -924,11 +945,40 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
 
     private void attachHub() {
         if (hubSubscription != null) return;
+        FlightReadinessStore store = FlightReadinessStore.getInstance();
+        store.start();
+        readinessSubscription = store.addListener(decision -> post(() -> {
+            if (invalidateMissionEvidenceForAircraftSession(true)) {
+                status.setText("Aircraft connection changed. Local draft retained; LOAD and UPLOAD again.");
+            }
+            renderMissionSync();
+        }));
         hubSubscription = DjiDataHub.getInstance().addListener(new DjiDataHub.Listener() {
             @Override public void onFlightState(@NonNull FlightControllerState state) {
                 post(() -> renderFlightState(state));
             }
         });
+    }
+
+    private long currentAircraftSessionGeneration() {
+        return FlightReadinessStore.getInstance().getAircraftSessionGeneration();
+    }
+
+    private boolean invalidateMissionEvidenceForAircraftSession(boolean recordTimeline) {
+        if (!missionEvidence.invalidateFor(currentAircraftSessionGeneration())) return false;
+        loadedMission = null;
+        loadedDraft = null;
+        if (recordTimeline) {
+            SessionTimelineStore.android("MISSION_SESSION_INVALIDATED",
+                    "Aircraft connection changed; prior Load/Upload evidence cleared");
+        }
+        return true;
+    }
+
+    private void clearLoadedMissionEvidence() {
+        loadedMission = null;
+        loadedDraft = null;
+        missionEvidence.clear();
     }
 
     private void renderFlightState(FlightControllerState state) {
@@ -994,12 +1044,17 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
             operator.addListener(missionListener);
             missionListenerAttached = true;
         }
+        if (invalidateMissionEvidenceForAircraftSession(true)) {
+            status.setText("Aircraft connection changed. Local draft retained; LOAD and UPLOAD again.");
+        }
         renderMissionSync();
     }
 
     @Override protected void onDetachedFromWindow() {
         if (hubSubscription != null) hubSubscription.close();
         hubSubscription = null;
+        if (readinessSubscription != null) readinessSubscription.close();
+        readinessSubscription = null;
         if (missionListenerAttached) operator.removeListener(missionListener);
         missionListenerAttached = false;
         super.onDetachedFromWindow();

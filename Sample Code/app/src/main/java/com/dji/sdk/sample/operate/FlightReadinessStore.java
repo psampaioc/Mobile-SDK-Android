@@ -23,6 +23,7 @@ public final class FlightReadinessStore {
     private final CallbackMulticaster<AuditListener> auditListeners = new CallbackMulticaster<>();
     private volatile DjiDataHub.StatusSnapshot latestSnapshot;
     private volatile boolean lastAircraftConnected;
+    private volatile long aircraftSessionGeneration;
     private volatile Boolean lastRthActive;
     private CallbackMulticaster.Subscription hubSubscription;
 
@@ -44,6 +45,7 @@ public final class FlightReadinessStore {
             @Override public void onStatusSnapshot(@NonNull DjiDataHub.StatusSnapshot snapshot) {
                 boolean connected = snapshot.aircraftConnected;
                 if (connected != lastAircraftConnected) {
+                    aircraftSessionGeneration++;
                     session.beginNewAircraftSession(SystemClock.elapsedRealtime());
                     if (connected) {
                         SessionTimelineStore.android("AIRCRAFT_SESSION",
@@ -81,6 +83,8 @@ public final class FlightReadinessStore {
     }
 
     @NonNull public FlightReadinessSession getSession() { return session; }
+    /** Monotonic identity for app-local evidence tied to an observed aircraft link session. */
+    public long getAircraftSessionGeneration() { return aircraftSessionGeneration; }
     @NonNull public FlightSafetyConfiguration getSafetyConfiguration() { return safetyConfiguration; }
 
     @NonNull public FlightReadinessModel.Decision currentDecision() {

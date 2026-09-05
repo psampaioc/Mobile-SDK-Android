@@ -16,6 +16,9 @@ public final class TransportEndpointPolicyTest {
         require(TransportEndpointPolicy.decide("192.168.1.10", "192.168.1.10", true)
                         == TransportEndpointPolicy.Action.KEEP,
                 "same endpoint preserves the existing session across views");
+        require(TransportEndpointPolicy.decide("192.168.1.10", "192.168.1.10", false)
+                        == TransportEndpointPolicy.Action.WAIT_FOR_AIRCRAFT,
+                "a transient aircraft disconnect retains the selected transport runtime for reconnection");
         require(TransportEndpointPolicy.decide("192.168.1.11", "192.168.1.10", false)
                         == TransportEndpointPolicy.Action.REPLACE,
                 "changing endpoint stops old runtime even while aircraft is unavailable");

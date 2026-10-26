@@ -1,5 +1,27 @@
 # Deferred work
 
+## Audit — flight-command safety and Primary video fan-out (2026-10-26)
+
+Compared against [the implementation plan](plans/2026-10-25-fix-flight-command-safety-and-video-fanout-plan.md)
+at HEAD `92c42c6a`.
+
+| Plan unit | Current result | What remains |
+| --- | --- | --- |
+| U1 — explicit DJI Home authority | Implemented in source; ownership check rejects Home setters from passive flight-state handling, and the explicit Mission action/readback remains. | Add an automated success/failure test at the hub/Mission boundary; the existing Home test covers the state model only. Props-off tablet smoke remains. |
+| U2 — passive Virtual Stick entry | Implemented in source; basic enable gates advanced mode and retains DJI error handling. | Add focused regression coverage for construction and failed-enable ordering; props-off device smoke remains. |
+| U3 — bounded Primary fan-out | Implemented for Operate, Transport, local recording, `BaseCameraView`, and Primary `VideoFeedView`; bounded per-consumer workers, overflow discontinuity, and peer isolation have JVM coverage. | **P2:** `PrimaryVideoFanout.close()` joins for at most 2 s. A slower in-flight consumer can outlive close and touch a detached owner. Also add explicit FIFO and drop-counter assertions; current tests cover overflow signaling but not order/counter visibility. |
+| U4 — recording STOP contention | Source detaches runtime/subscriptions under lock and closes outside it; generation fences stale state. | **P2:** no recording runtime tests exist. Also, `EncodedVideoAccessUnitPipeline.offer()` and `drain()` share a monitor while `drain()` calls the muxer sink; an in-flight recording `onVideo()` can still wait behind disk/muxer work. Add tests for prompt callback return, slow close, repeated Stop, stale callbacks, and STOP isolation from preview/transport before claiming the full guarantee. |
+| U5 — Home session/OcuSync reconciliation | Source fences explicit Home completion/readback by aircraft-session generation; same OcuSync link keeps its quality sample and replacement clears it. | Add tests at the hub/callback boundary for delayed old-session results and same-link reconcile vs. replacement; current tests mainly cover pure state models. Hardware cadence/readback remains unverified. |
+| U6 — map/location/endpoint/RTK UI edges | Source includes freshness fallback, explicit map destruction on discarded Mission pages, literal IP validation, and active-page checks for RTK UI results. Freshness and endpoint policies have JVM coverage. | Add lifecycle tests for map hide/discard and delayed RTK results; verify centering and repeated Mission navigation on tablet. |
+| U7 — diagnostic rotation failure | Delete/rename failure becomes terminal, and deterministic failure cases verify source evidence is retained. | **P2:** `offer()` checks `running` separately from queue insertion. A producer that already observed `true` can enqueue after the writer has failed, set `running=false`, and cleared the queue; that record then has no worker. Make terminal rejection atomic with enqueue or otherwise drain/reject safely, and add a producer-vs-rotation-failure race test. |
+| U8 — verification and shipping | JVM suite, callback-ownership check, repository hygiene, debug APK build/verification, and Android-test source compilation pass. Commit `92c42c6a` is pushed. | `connectedDebugAndroidTest` was compiled but not run on a device; props-off/M210/Cendence and real Primary preview+transport+recording smoke tests remain unverified. The pushed commit contains 128 files / 11,185 insertions across accumulated work, rather than a narrowly scoped corrective commit as the plan requested; do not rewrite the published commit—keep future changes narrowly staged. The plan frontmatter still says `status: proposed`; update its status only when these remaining gates are closed. |
+
+Local checks rerun for this audit on 2026-10-26: `scripts/test_android.sh --offline`,
+`scripts/verify_dji_callback_ownership.sh`, `scripts/check_repository_hygiene.py`,
+`scripts/build_android.sh :app:assembleDebug :app:compileDebugAndroidTestJavaWithJavac`,
+`scripts/verify_apk.sh`, and `git diff --check` all passed. Build/test success is not
+hardware evidence. No aircraft command or device test was performed.
+
 ## Primary live downlink control and recording destination
 
 These are deliberately deferred until the current Primary transport and camera

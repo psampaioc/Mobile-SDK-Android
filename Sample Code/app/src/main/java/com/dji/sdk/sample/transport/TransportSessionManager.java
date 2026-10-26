@@ -22,6 +22,7 @@ public final class TransportSessionManager {
     public static final String ACTIVE_IP = "active_edge_ip";
     @Nullable private TransportRuntime runtime;
     @Nullable private String runtimeHost;
+    private String lastReconcileFailure = "";
 
     private TransportSessionManager() { }
 
@@ -42,6 +43,15 @@ public final class TransportSessionManager {
     public synchronized TransportRuntime getRuntime() {
         return runtime;
     }
+
+    public synchronized String getLastReconcileFailure() { return lastReconcileFailure; }
+
+    synchronized void recordReconcileFailure(Exception failure) {
+        lastReconcileFailure = failure == null ? "unknown" : failure.getClass().getSimpleName()
+                + (failure.getMessage() == null ? "" : ": " + failure.getMessage());
+    }
+
+    private void clearReconcileFailure() { lastReconcileFailure = ""; }
 
     /** Starts one session, replacing it only when the selected endpoint changed. */
     public synchronized TransportRuntime start(Context context, Aircraft aircraft,
@@ -66,10 +76,13 @@ public final class TransportSessionManager {
         switch (action) {
             case STOP:
                 stopLocked();
+                clearReconcileFailure();
                 return false;
             case WAIT_FOR_AIRCRAFT:
+                clearReconcileFailure();
                 return false;
             case KEEP:
+                clearReconcileFailure();
                 return true;
             case REPLACE:
                 // The previous endpoint is no longer operator-authorized. Stop it before
@@ -79,6 +92,7 @@ public final class TransportSessionManager {
                 // Falls through intentionally to create one replacement session.
             case START:
                 start(context, aircraft, new TransportConfig(host));
+                clearReconcileFailure();
                 return true;
             default:
                 throw new IllegalStateException("Unhandled transport endpoint action: " + action);
@@ -88,7 +102,9 @@ public final class TransportSessionManager {
     public synchronized void selectEndpoint(Context context, String host, @Nullable Aircraft aircraft)
             throws Exception {
         if (host == null || host.trim().isEmpty()) throw new IllegalArgumentException("edge host is required");
-        preferences(context).edit().putString(ACTIVE_IP, host.trim()).apply();
+        String selectedHost = host.trim();
+        new TransportConfig(selectedHost);
+        preferences(context).edit().putString(ACTIVE_IP, selectedHost).apply();
         TransportForegroundService.startForSelectedEndpoint(context);
         reconcile(context, aircraft);
     }

@@ -10,6 +10,7 @@ import android.content.Intent;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
+import android.os.SystemClock;
 
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
@@ -19,6 +20,7 @@ import com.dji.sdk.sample.R;
 import com.dji.sdk.sample.djihub.DjiDataHub;
 import com.dji.sdk.sample.internal.controller.DJISampleApplication;
 import com.dji.sdk.sample.internal.controller.MainActivity;
+import com.dji.sdk.sample.recording.LocalPrimaryRecordingManager;
 
 import dji.sdk.products.Aircraft;
 
@@ -28,10 +30,33 @@ public final class TransportForegroundService extends Service {
     private static final int NOTIFICATION_ID = 41061;
     private static final long RECONCILE_INTERVAL_MS = 2_000L;
     private final Handler handler = new Handler();
+    private static volatile boolean alive;
+    private static volatile long lastReconcileElapsedRealtimeNanos;
+    private static volatile TransportWifiLock.Snapshot wifiLockSnapshot =
+            new TransportWifiLock.Snapshot(TransportWifiLock.State.INACTIVE, "NONE", "");
+    private TransportWifiLock wifiLock;
+
+    /** Local-only diagnostic state; it has no lifecycle or transport side effects. */
+    public static boolean isAlive() { return alive; }
+    /** Most recent service reconciliation for local transport diagnostics only. */
+    public static long getLastReconcileElapsedRealtimeNanos() {
+        return lastReconcileElapsedRealtimeNanos;
+    }
+    /** Local Android state only; it is never evidence that Edge received a packet. */
+    public static TransportWifiLock.Snapshot getWifiLockSnapshot() { return wifiLockSnapshot; }
 
     /** Must be called from an operator-visible UI action or foreground app lifecycle callback. */
     public static void startForSelectedEndpoint(Context context) {
         if (!TransportSessionManager.hasSelectedEndpoint(context)) return;
+        start(context);
+    }
+
+    /** Called only from the visible Record action; retains passive capture outside the Activity. */
+    public static void startForRecording(Context context) {
+        start(context);
+    }
+
+    private static void start(Context context) {
         Intent intent = new Intent(context.getApplicationContext(), TransportForegroundService.class);
         ContextCompat.startForegroundService(context.getApplicationContext(), intent);
     }
@@ -44,7 +69,14 @@ public final class TransportForegroundService extends Service {
 
     private final Runnable reconcile = new Runnable() {
         @Override public void run() {
-            if (!TransportSessionManager.hasSelectedEndpoint(TransportForegroundService.this)) {
+            lastReconcileElapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos();
+            boolean transportWanted = TransportSessionManager.hasSelectedEndpoint(TransportForegroundService.this);
+            boolean recordingWanted = LocalPrimaryRecordingManager.getInstance().isRetentionNeeded();
+            if (wifiLock != null) {
+                wifiLockSnapshot = transportWanted ? wifiLock.acquire(TransportForegroundService.this)
+                        : wifiLock.release();
+            }
+            if (!transportWanted && !recordingWanted) {
                 stopSelf();
                 return;
             }
@@ -53,10 +85,11 @@ public final class TransportForegroundService extends Service {
                 // Idempotent hub refresh; this service never registers a direct DJI callback.
                 DjiDataHub.getInstance().start(aircraft);
             }
-            try {
+            if (transportWanted) try {
                 TransportSessionManager.getInstance().reconcile(TransportForegroundService.this, aircraft);
-            } catch (Exception ignored) {
-                // Keep selected intent across transient Wi-Fi or DJI reconnection.
+            } catch (Exception failure) {
+                // Keep operator intent across transient reconnect, but never hide the failure.
+                TransportSessionManager.getInstance().recordReconcileFailure(failure);
             }
             handler.postDelayed(this, RECONCILE_INTERVAL_MS);
         }
@@ -64,6 +97,9 @@ public final class TransportForegroundService extends Service {
 
     @Override public void onCreate() {
         super.onCreate();
+        alive = true;
+        wifiLock = new TransportWifiLock();
+        wifiLockSnapshot = wifiLock.snapshot();
         createChannel();
         startForeground(NOTIFICATION_ID, notification());
     }
@@ -80,6 +116,8 @@ public final class TransportForegroundService extends Service {
 
     @Override public void onDestroy() {
         handler.removeCallbacks(reconcile);
+        alive = false;
+        if (wifiLock != null) wifiLockSnapshot = wifiLock.release();
         super.onDestroy();
     }
 

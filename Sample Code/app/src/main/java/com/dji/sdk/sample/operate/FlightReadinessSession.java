@@ -54,6 +54,11 @@ public final class FlightReadinessSession {
         if (acknowledged.add(item)) addEvent(new Event("acknowledged", elapsedMs, item));
     }
 
+    /** Allows an operator to correct an acknowledgement before mission start. */
+    public synchronized void unacknowledge(@NonNull ChecklistItem item, long elapsedMs) {
+        if (acknowledged.remove(item)) addEvent(new Event("unacknowledged", elapsedMs, item));
+    }
+
     public synchronized void beginNewAircraftSession(long elapsedMs) {
         acknowledged.clear();
         addEvent(new Event("aircraft_session_reset", elapsedMs, null));

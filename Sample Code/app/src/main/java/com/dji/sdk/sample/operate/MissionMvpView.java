@@ -9,6 +9,9 @@ import android.graphics.drawable.ColorDrawable;
 import android.content.pm.PackageManager;
 import android.location.Location;
 import android.location.LocationManager;
+import android.os.SystemClock;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.view.LayoutInflater;
 import android.view.Menu;
 import android.view.MenuItem;
@@ -19,6 +22,7 @@ import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ArrayAdapter;
+import android.widget.AdapterView;
 import android.widget.PopupWindow;
 import android.widget.ScrollView;
 import android.widget.Spinner;
@@ -30,12 +34,20 @@ import androidx.core.content.ContextCompat;
 import com.dji.sdk.sample.R;
 import com.dji.sdk.sample.djihub.CallbackMulticaster;
 import com.dji.sdk.sample.djihub.DjiDataHub;
+import com.dji.sdk.sample.djihub.DjiHomeState;
 import com.dji.sdk.sample.internal.view.PresentableView;
+import com.dji.sdk.sample.internal.controller.MainActivity;
+import com.dji.sdk.sample.internal.controller.DJISampleApplication;
+import com.dji.sdk.sample.missionplanner.MissionFolderPreferences;
+import com.squareup.otto.Subscribe;
 import com.dji.sdk.sample.missionplanner.MissionDraft;
 import com.dji.sdk.sample.missionplanner.MissionFinishAction;
+import com.dji.sdk.sample.missionplanner.MissionHeadingMode;
+import com.dji.sdk.sample.missionplanner.MissionDefaultsPreferences;
 import com.dji.sdk.sample.missionplanner.MissionDraftLibrary;
 import com.dji.sdk.sample.missionplanner.MissionDraftValidator;
 import com.dji.sdk.sample.missionplanner.MissionRouteEditor;
+import com.dji.sdk.sample.missionplanner.MissionMapInteractionState;
 import com.dji.sdk.sample.missionplanner.MissionPreflight;
 import com.dji.sdk.sample.missionplanner.MissionSyncState;
 import com.dji.sdk.sample.missionplanner.MissionSessionEvidence;
@@ -68,14 +80,19 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
     private final EditText speed;
     private final EditText name;
     private final Spinner finish;
+    private final Spinner headingMode;
     private final TextView route;
     private final TextView sync;
     private final TextView stats;
     private final TextView boundaryWarning;
     private final TextView home;
     private final TextView status;
+    private final Button addWaypoints;
+    private final Button addDjiHome;
     private final WaypointMissionOperator operator;
     private final MissionDraftLibrary library;
+    private final MissionDefaultsPreferences defaults;
+    private final MissionFolderPreferences missionFolder;
     private final PlanningBoundaryProfileLibrary boundaryProfiles;
     private final MissionRouteEditor routeEditor;
     private final MapLibreMissionMapView map;
@@ -83,8 +100,13 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
     private MissionDraft loadedDraft;
     private final MissionSessionEvidence missionEvidence = new MissionSessionEvidence();
     private boolean draftDirty;
+    private boolean bindingDraft;
+    private int lastFinishSelection;
+    private int lastHeadingSelection;
     private PlanningBoundaryProfile activeBoundaryProfile;
-    private boolean addMode;
+    private PlanningBoundaryProfile boundaryCaptureProfile;
+    private final java.util.List<PlanningBoundary.Point> boundaryCapturePoints = new java.util.ArrayList<>();
+    private final MissionMapInteractionState mapInteraction = new MissionMapInteractionState();
     private int selectedWaypoint = -1;
     private CallbackMulticaster.Subscription hubSubscription;
     private CallbackMulticaster.Subscription readinessSubscription;
@@ -94,8 +116,7 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
     private boolean missionListenerAttached;
     private Double latestAircraftLatitude;
     private Double latestAircraftLongitude;
-    /** Last home coordinate positively acknowledged by FlightController.setHomeLocation. */
-    private final ConfirmedDjiHomeState confirmedDjiHome = new ConfirmedDjiHomeState();
+    private long latestAircraftLocationElapsedMs = -1L;
     private final WaypointMissionOperatorListener missionListener = new WaypointMissionOperatorListener() {
         @Override public void onDownloadUpdate(@NonNull dji.common.mission.waypoint.WaypointMissionDownloadEvent event) {
             post(() -> {
@@ -153,13 +174,18 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
         speed = findViewById(R.id.mission_mvp_speed);
         name = findViewById(R.id.mission_mvp_name);
         finish = findViewById(R.id.mission_mvp_finish);
+        headingMode = findViewById(R.id.mission_mvp_heading);
         route = findViewById(R.id.mission_mvp_route);
         sync = findViewById(R.id.mission_mvp_sync);
         stats = findViewById(R.id.mission_mvp_stats);
         boundaryWarning = findViewById(R.id.mission_mvp_boundary_warning);
         home = findViewById(R.id.mission_mvp_home);
         status = findViewById(R.id.mission_mvp_status);
+        addWaypoints = findViewById(R.id.mission_mvp_add);
+        addDjiHome = findViewById(R.id.mission_mvp_add_dji_home);
         library = new MissionDraftLibrary(context);
+        defaults = new MissionDefaultsPreferences(context);
+        missionFolder = new MissionFolderPreferences(context);
         boundaryProfiles = new PlanningBoundaryProfileLibrary(context);
         routeEditor = new MissionRouteEditor(loadInitialDraft());
         name.setText(routeEditor.getDraft().getName());
@@ -170,16 +196,33 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
                 "Hover at final waypoint", "Return and land at DJI Home", "Land at final waypoint"});
         finish.setAdapter(finishAdapter);
         finish.setSelection(routeEditor.getDraft().getFinishAction().ordinal());
-        altitude.setOnFocusChangeListener((view, hasFocus) -> { if (!hasFocus) refreshRoute(); });
-        speed.setOnFocusChangeListener((view, hasFocus) -> { if (!hasFocus) refreshRoute(); });
+        ArrayAdapter<String> headingAdapter = new ArrayAdapter<>(context,
+                android.R.layout.simple_spinner_dropdown_item, new String[]{
+                "AUTO", "INITIAL DIRECTION", "REMOTE CONTROLLER"});
+        headingMode.setAdapter(headingAdapter);
+        headingMode.setSelection(routeEditor.getDraft().getHeadingMode().ordinal());
+        lastFinishSelection = finish.getSelectedItemPosition();
+        lastHeadingSelection = headingMode.getSelectedItemPosition();
+        attachDraftEditListeners();
         map = new MapLibreMissionMapView(context);
         ((FrameLayout) findViewById(R.id.mission_mvp_map)).addView(map);
         map.setListener(new MapLibreMissionMapView.Listener() {
             @Override public void onMapTap(double latitude, double longitude) {
-                if (!addMode) { status.setText("Select ADD WAYPOINT before tapping the map."); return; }
+                if (mapInteraction.getMode() == MissionMapInteractionState.Mode.CAPTURE_BOUNDARY_POINTS) {
+                    captureBoundaryPoint(latitude, longitude);
+                    return;
+                }
+                if (mapInteraction.getMode() == MissionMapInteractionState.Mode.SELECT_DJI_HOME) {
+                    mapInteraction.clear();
+                    addDjiHome.setText("ADD DJI HOME");
+                    confirmSetDjiHome(latitude, longitude, "map point");
+                    return;
+                }
+                if (mapInteraction.getMode() != MissionMapInteractionState.Mode.ADD_WAYPOINTS) {
+                    status.setText("Select ADD WAYPOINTS before tapping the map."); return;
+                }
                 routeEditor.append(new MissionWaypoint(latitude, longitude, null));
                 selectedWaypoint = routeEditor.getDraft().getWaypoints().size() - 1;
-                addMode = false;
                 routeChanged(String.format(Locale.US, "Waypoint %d added at %.6f, %.6f.",
                         selectedWaypoint + 1, latitude, longitude));
             }
@@ -189,26 +232,51 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
             }
         });
         operator = MissionControl.getInstance().getWaypointMissionOperator();
-        ((Button) findViewById(R.id.mission_mvp_add)).setOnClickListener(view -> {
-            addMode = true;
-            status.setText("Tap the map to append a waypoint.");
+        findViewById(R.id.mission_mvp_new).setOnClickListener(view -> newDraft());
+        addWaypoints.setOnClickListener(view -> {
+            boolean active = mapInteraction.toggleAddWaypoints();
+            addWaypoints.setText(active ? "STOP ADDING" : "ADD WAYPOINTS");
+            if (active) addDjiHome.setText("ADD DJI HOME");
+            status.setText(active ? "Tap the map to append waypoints. Press STOP ADDING when finished."
+                    : "Waypoint entry stopped.");
+        });
+        addDjiHome.setOnClickListener(view -> {
+            if (mapInteraction.isBoundaryCapture()) clearBoundaryCapture();
+            boolean active = mapInteraction.toggleSelectDjiHome();
+            addDjiHome.setText(active ? "CANCEL HOME POINT" : "ADD DJI HOME");
+            if (active) addWaypoints.setText("ADD WAYPOINTS");
+            status.setText(active ? "Tap the map to choose a DJI Home Point. It will not add a waypoint."
+                    : "DJI Home Point selection stopped.");
         });
         ((Button) findViewById(R.id.mission_mvp_center)).setOnClickListener(
                 view -> centerOnCurrentLocation());
         findViewById(R.id.mission_mvp_library).setOnClickListener(
                 view -> openMissionLibrary());
+        findViewById(R.id.mission_mvp_library_path).setOnClickListener(view -> selectMissionFolder());
         ((Button) findViewById(R.id.mission_mvp_delete)).setOnClickListener(view -> deleteSelected());
         ((Button) findViewById(R.id.mission_mvp_save)).setOnClickListener(view -> saveDraft());
         ((Button) findViewById(R.id.mission_mvp_load)).setOnClickListener(view -> load());
         ((Button) findViewById(R.id.mission_mvp_upload)).setOnClickListener(view -> upload());
-        ((Button) findViewById(R.id.mission_mvp_download)).setOnClickListener(view -> download());
         ((Button) findViewById(R.id.mission_mvp_boundaries)).setOnClickListener(view -> openBoundaryProfiles());
+        findViewById(R.id.mission_mvp_boundary_undo).setOnClickListener(view -> undoBoundaryCapturePoint());
+        findViewById(R.id.mission_mvp_boundary_cancel).setOnClickListener(view -> clearBoundaryCapture());
         ((Button) findViewById(R.id.mission_mvp_timeline)).setOnClickListener(view -> openSessionLog());
         ((Button) findViewById(R.id.mission_mvp_start)).setOnClickListener(view -> start());
         ((Button) findViewById(R.id.mission_mvp_pause)).setOnClickListener(view -> { SessionTimelineStore.operator("MISSION_PAUSE", "Pause pressed"); operator.pauseMission(result("Pause")); });
         ((Button) findViewById(R.id.mission_mvp_cancel)).setOnClickListener(view -> { SessionTimelineStore.operator("MISSION_CANCEL", "Cancel pressed"); operator.stopMission(result("Cancel")); });
         refreshRoute();
+        renderMissionFolder();
         attachHub();
+    }
+
+    private void selectMissionFolder() {
+        if (getContext() instanceof MainActivity) ((MainActivity) getContext()).selectMissionFolder();
+        else status.setText("Mission folder selection is unavailable from this screen.");
+    }
+
+    private void renderMissionFolder() {
+        TextView path = findViewById(R.id.mission_mvp_library_path);
+        path.setText(missionFolder.displayName());
     }
 
     private void load() {
@@ -260,23 +328,6 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
         }));
     }
 
-    private void download() {
-        SessionTimelineStore.operator("MISSION_DOWNLOAD", "Download pressed");
-        WaypointMissionState currentState = operator.getCurrentState();
-        if (!WaypointMissionState.EXECUTING.equals(currentState)
-                && !WaypointMissionState.EXECUTION_PAUSED.equals(currentState)) {
-            status.setText("REMOTE UNKNOWN — DJI download is available only while executing or paused.");
-            renderMissionSync();
-            return;
-        }
-        status.setText("Downloading mission evidence from aircraft.");
-        operator.downloadMission(error -> post(() -> {
-            SessionTimelineStore.dji("MISSION_DOWNLOAD_RESULT", error == null ? "Download request completed" : error.getDescription());
-            if (error != null) status.setText("Download failed: " + error.getDescription());
-            else status.setText("REMOTE UNKNOWN — download completed, but DJI did not provide route contents. Local draft unchanged.");
-            renderMissionSync();
-        }));
-    }
 
     private void start() {
         SessionTimelineStore.operator("MISSION_START", "Start pressed");
@@ -327,9 +378,75 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
 
     private MissionDraft currentDraft() {
         return new MissionDraft(name.getText().toString(), parse(altitude, "altitude"),
-                parse(speed, "speed"), selectedFinishAction(),
+                parse(speed, "speed"), selectedFinishAction(), selectedHeadingMode(),
                 routeEditor.getDraft().getWaypoints(), routeEditor.getDraft().getPlanningReferenceLatitude(),
                 routeEditor.getDraft().getPlanningReferenceLongitude());
+    }
+
+    private MissionHeadingMode selectedHeadingMode() {
+        return MissionHeadingMode.values()[Math.max(0, Math.min(headingMode.getSelectedItemPosition(),
+                MissionHeadingMode.values().length - 1))];
+    }
+
+    private void newDraft() {
+        if (draftDirty) {
+            new AlertDialog.Builder(getContext()).setTitle("Discard local changes?")
+                    .setMessage("Create a new empty draft using Settings defaults?")
+                    .setNegativeButton("CANCEL", null).setPositiveButton("NEW DRAFT", (dialog, ignored) -> replaceWithNewDraft())
+                    .show();
+            return;
+        }
+        replaceWithNewDraft();
+    }
+
+    private void replaceWithNewDraft() {
+        bindVisibleDraft(defaults.load().newDraft());
+        status.setText("New draft created from Settings defaults.");
+    }
+
+    private void attachDraftEditListeners() {
+        TextWatcher formTextWatcher = new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence source, int start, int count, int after) { }
+            @Override public void onTextChanged(CharSequence source, int start, int before, int count) { }
+            @Override public void afterTextChanged(Editable editable) { markDraftChanged(); }
+        };
+        name.addTextChangedListener(formTextWatcher);
+        altitude.addTextChangedListener(formTextWatcher);
+        speed.addTextChangedListener(formTextWatcher);
+        finish.setOnItemSelectedListener(selectionListener(true));
+        headingMode.setOnItemSelectedListener(selectionListener(false));
+    }
+
+    private AdapterView.OnItemSelectedListener selectionListener(final boolean isFinish) {
+        return new AdapterView.OnItemSelectedListener() {
+            @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                int previous = isFinish ? lastFinishSelection : lastHeadingSelection;
+                if (isFinish) lastFinishSelection = position;
+                else lastHeadingSelection = position;
+                if (position != previous) markDraftChanged();
+            }
+            @Override public void onNothingSelected(AdapterView<?> parent) { }
+        };
+    }
+
+    private void bindVisibleDraft(MissionDraft draft) {
+        bindingDraft = true;
+        try {
+            routeEditor.replace(draft);
+            name.setText(draft.getName());
+            altitude.setText(String.format(Locale.US, "%.1f", draft.getDefaultAltitudeMeters()));
+            speed.setText(String.format(Locale.US, "%.1f", draft.getBaseSpeedMetersPerSecond()));
+            finish.setSelection(draft.getFinishAction().ordinal());
+            headingMode.setSelection(draft.getHeadingMode().ordinal());
+            lastFinishSelection = finish.getSelectedItemPosition();
+            lastHeadingSelection = headingMode.getSelectedItemPosition();
+            selectedWaypoint = -1;
+            draftDirty = false;
+            clearLoadedMissionEvidence();
+        } finally {
+            bindingDraft = false;
+        }
+        refreshRoute();
     }
 
     private MissionFinishAction selectedFinishAction() {
@@ -568,10 +685,15 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
     }
 
     private void routeChanged(String message) {
-        clearLoadedMissionEvidence();
+        markDraftChanged();
+        status.setText(message);
+    }
+
+    private void markDraftChanged() {
+        if (bindingDraft) return;
+        if (!draftDirty) clearLoadedMissionEvidence();
         draftDirty = true;
         refreshRoute();
-        status.setText(message);
     }
 
     private int dp(int value) {
@@ -580,38 +702,53 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
 
     private void confirmSetDjiHome(int index) {
         MissionWaypoint waypoint = routeEditor.getDraft().getWaypoints().get(index);
-        String coordinate = String.format(Locale.US, "%.6f, %.6f",
-                waypoint.getLatitude(), waypoint.getLongitude());
-        new AlertDialog.Builder(getContext())
-                .setTitle("Set DJI Home Point?")
-                .setMessage("Waypoint " + (index + 1) + "\n" + coordinate
-                        + "\n\nThis changes the aircraft's real Return-to-Home location immediately."
-                        + " It does not save, load, or upload this mission.")
-                .setNegativeButton("CANCEL", null)
-                .setPositiveButton("SET DJI HOME", (dialog, ignored) -> setDjiHome(waypoint, index))
-                .show();
+        confirmSetDjiHome(waypoint.getLatitude(), waypoint.getLongitude(), "waypoint " + (index + 1));
     }
 
-    private void setDjiHome(MissionWaypoint waypoint, int index) {
-        SessionTimelineStore.operator("DJI_HOME_SET", "Set DJI Home requested for waypoint " + (index + 1));
+    private void confirmSetDjiHome(double latitude, double longitude, String source) {
+        String coordinate = String.format(Locale.US, "%.6f, %.6f", latitude, longitude);
+        map.setPendingDjiHome(latitude, longitude);
+        AlertDialog homeDialog = new AlertDialog.Builder(getContext())
+                .setTitle("Set DJI Home Point?")
+                .setMessage(capitalize(source) + "\n" + coordinate
+                        + "\n\nThis changes the aircraft's real Return-to-Home location immediately."
+                        + " It does not save, load, or upload this mission.")
+                .setNegativeButton("CANCEL", (ignoredDialog, ignored) -> map.setPendingDjiHome(null, null))
+                .setPositiveButton("SET DJI HOME", (ignoredDialog, ignored) -> setDjiHome(latitude, longitude, source))
+                .create();
+        homeDialog.setOnCancelListener(ignored -> map.setPendingDjiHome(null, null));
+        homeDialog.show();
+    }
+
+    private static String capitalize(String text) {
+        return text == null || text.isEmpty() ? "Map point"
+                : Character.toUpperCase(text.charAt(0)) + text.substring(1);
+    }
+
+    private void setDjiHome(double latitude, double longitude, String source) {
+        SessionTimelineStore.operator("DJI_HOME_SET", "Set DJI Home requested for " + source);
+        final long requestGeneration = currentAircraftSessionGeneration();
         boolean sent = DjiDataHub.getInstance().setDjiHomeLocation(
-                new LocationCoordinate2D(waypoint.getLatitude(), waypoint.getLongitude()), error ->
+                new LocationCoordinate2D(latitude, longitude), error ->
                         post(() -> {
+                            if (requestGeneration != currentAircraftSessionGeneration()) return;
                             if (error != null) {
                                 SessionTimelineStore.dji("DJI_HOME_SET_RESULT", error.getDescription());
+                                map.setPendingDjiHome(null, null);
                                 status.setText("Set DJI Home failed: " + error.getDescription());
                                 return;
                             }
-                            // The command completion is authoritative. FlightControllerState can
-                            // lag this state by one or more callbacks, so do not block LOAD/UPLOAD
-                            // while waiting for that passive update.
-                            confirmedDjiHome.confirm(waypoint.getLatitude(), waypoint.getLongitude());
-                            SessionTimelineStore.dji("DJI_HOME_SET_RESULT", "DJI Home confirmed for waypoint " + (index + 1));
-                            renderConfirmedDjiHome();
-                            status.setText("DJI Home set to waypoint " + (index + 1) + ".");
+                            SessionTimelineStore.dji("DJI_HOME_SET_RESULT", "DJI Home confirmed for " + source);
+                            map.setPendingDjiHome(null, null);
+                            // DJI accepted the explicit command. Reflect that confirmed global Home
+                            // immediately instead of waiting for the next recurring state callback.
+                            renderConfirmedDjiHome(latitude, longitude);
+                            DjiDataHub.getInstance().requestDjiHomeReadback();
+                            status.setText("DJI Home set to " + source + ".");
                         }));
         if (!sent) {
             SessionTimelineStore.android("DJI_HOME_SET_RESULT", "Flight controller or coordinates unavailable");
+            map.setPendingDjiHome(null, null);
             status.setText("DJI Home is unavailable: flight controller or coordinates not ready.");
         }
     }
@@ -635,15 +772,7 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
     }
 
     private void openSavedDraft(MissionDraft draft) {
-        routeEditor.replace(draft);
-        name.setText(draft.getName());
-        altitude.setText(String.format(Locale.US, "%.1f", draft.getDefaultAltitudeMeters()));
-        speed.setText(String.format(Locale.US, "%.1f", draft.getBaseSpeedMetersPerSecond()));
-        finish.setSelection(draft.getFinishAction().ordinal());
-        selectedWaypoint = -1;
-        clearLoadedMissionEvidence();
-        draftDirty = false;
-        refreshRoute();
+        bindVisibleDraft(draft);
         status.setText("Opened " + draft.getName() + ". Edit, then LOAD when ready.");
     }
 
@@ -652,7 +781,9 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
         if (tabletLocation != null) {
             map.centerOn(tabletLocation.getLatitude(), tabletLocation.getLongitude(), 18.5d);
             status.setText("Centered on tablet location.");
-        } else if (latestAircraftLatitude != null && latestAircraftLongitude != null) {
+        } else if (latestAircraftLatitude != null && latestAircraftLongitude != null
+                && OperateStatusModel.isFresh(latestAircraftLocationElapsedMs,
+                SystemClock.elapsedRealtime())) {
             map.centerOn(latestAircraftLatitude, latestAircraftLongitude, 18.5d);
             status.setText("Tablet location unavailable; centered on aircraft.");
         } else {
@@ -666,10 +797,14 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
         LocationManager manager = (LocationManager) getContext().getSystemService(Context.LOCATION_SERVICE);
         if (manager == null) return null;
         Location newest = null;
+        long nowMs = SystemClock.elapsedRealtime();
         for (String provider : manager.getProviders(true)) {
             try {
                 Location candidate = manager.getLastKnownLocation(provider);
-                if (candidate != null && (newest == null || candidate.getTime() > newest.getTime())) {
+                long receivedAtMs = candidate == null ? -1L : candidate.getElapsedRealtimeNanos() / 1_000_000L;
+                if (candidate != null && OperateStatusModel.isFresh(receivedAtMs, nowMs)
+                        && (newest == null || candidate.getElapsedRealtimeNanos()
+                        > newest.getElapsedRealtimeNanos())) {
                     newest = candidate;
                 }
             } catch (SecurityException ignored) { }
@@ -709,7 +844,7 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
                         status.setText("Profile already exists. Select it to add or edit a boundary.");
                         return;
                     }
-                    openBoundaryProfileEditor(profile);
+                    beginBoundaryCapture(profile);
                 }).show();
     }
 
@@ -724,9 +859,81 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
         }
         new AlertDialog.Builder(getContext()).setTitle(profile.getName() + " — LOCAL ONLY")
                 .setItems(entries, (dialog, index) -> {
-                    if (index == 0) chooseBoundaryType(profile);
+                    if (index == 0) beginBoundaryCapture(profile);
                     else editBoundary(profile, index - 1, profile.getBoundaries().get(index - 1));
                 }).show();
+    }
+
+    private void beginBoundaryCapture(PlanningBoundaryProfile profile) {
+        boundaryCaptureProfile = profile;
+        boundaryCapturePoints.clear();
+        mapInteraction.beginBoundaryCapture();
+        map.setBoundaryCapturePoints(boundaryCapturePoints);
+        findViewById(R.id.mission_mvp_boundary_capture_actions).setVisibility(VISIBLE);
+        status.setText("Tap four map positions for local boundary " + profile.getName() + ".");
+    }
+
+    private void captureBoundaryPoint(double latitude, double longitude) {
+        if (boundaryCaptureProfile == null || boundaryCapturePoints.size() >= 4) return;
+        boundaryCapturePoints.add(new PlanningBoundary.Point(latitude, longitude));
+        map.setBoundaryCapturePoints(boundaryCapturePoints);
+        if (boundaryCapturePoints.size() < 4) {
+            status.setText("Boundary point " + boundaryCapturePoints.size() + " of 4 added.");
+            return;
+        }
+        chooseCapturedBoundaryType();
+    }
+
+    private void chooseCapturedBoundaryType() {
+        String[] types = {"EXCLUSION POLYGON", "INCLUSION POLYGON", "EXCLUSION CIRCLE", "INCLUSION CIRCLE"};
+        new AlertDialog.Builder(getContext()).setTitle("BUILD LOCAL BOUNDARY")
+                .setMessage("Four points captured. Circle encloses all four points. Not DJI enforced.")
+                .setNegativeButton("CANCEL", (dialog, ignored) -> clearBoundaryCapture())
+                .setItems(types, (dialog, index) -> saveCapturedBoundary(types[index])).show();
+    }
+
+    private void saveCapturedBoundary(String type) {
+        if (boundaryCaptureProfile == null || boundaryCapturePoints.size() != 4) return;
+        try {
+            PlanningBoundary.Kind kind = type.startsWith("EXCLUSION")
+                    ? PlanningBoundary.Kind.EXCLUSION : PlanningBoundary.Kind.INCLUSION;
+            PlanningBoundary boundary;
+            if (type.endsWith("POLYGON")) {
+                boundary = PlanningBoundary.polygon("Boundary " + (boundaryCaptureProfile.getBoundaries().size() + 1), kind, boundaryCapturePoints);
+            } else {
+                double lat = 0d, lon = 0d;
+                for (PlanningBoundary.Point point : boundaryCapturePoints) { lat += point.getLatitude(); lon += point.getLongitude(); }
+                lat /= boundaryCapturePoints.size(); lon /= boundaryCapturePoints.size();
+                double radius = 1d;
+                for (PlanningBoundary.Point point : boundaryCapturePoints) radius = Math.max(radius, distanceMeters(lat, lon, point.getLatitude(), point.getLongitude()));
+                boundary = PlanningBoundary.circle("Boundary " + (boundaryCaptureProfile.getBoundaries().size() + 1), kind, lat, lon, radius);
+            }
+            PlanningBoundaryProfile saved = boundaryCaptureProfile.withBoundaryAppended(boundary);
+            if (!boundaryProfiles.save(saved)) throw new IllegalStateException("could not save profile");
+            selectBoundaryProfile(saved); status.setText("Local boundary saved. It is not DJI enforced.");
+        } catch (RuntimeException error) { status.setText("Boundary not saved: " + error.getMessage()); }
+        finally { clearBoundaryCapture(); }
+    }
+
+    private void clearBoundaryCapture() {
+        mapInteraction.cancelBoundaryCapture(); boundaryCaptureProfile = null; boundaryCapturePoints.clear(); map.setBoundaryCapturePoints(null);
+        findViewById(R.id.mission_mvp_boundary_capture_actions).setVisibility(GONE);
+    }
+
+    private void undoBoundaryCapturePoint() {
+        if (!mapInteraction.isBoundaryCapture() || boundaryCapturePoints.isEmpty()) {
+            status.setText("No boundary point to undo.");
+            return;
+        }
+        boundaryCapturePoints.remove(boundaryCapturePoints.size() - 1);
+        map.setBoundaryCapturePoints(boundaryCapturePoints);
+        status.setText("Boundary point removed. " + boundaryCapturePoints.size() + " of 4 captured.");
+    }
+
+    private static double distanceMeters(double aLat, double aLon, double bLat, double bLon) {
+        double lat = Math.toRadians(bLat - aLat), lon = Math.toRadians(bLon - aLon);
+        double h = Math.sin(lat / 2d) * Math.sin(lat / 2d) + Math.cos(Math.toRadians(aLat)) * Math.cos(Math.toRadians(bLat)) * Math.sin(lon / 2d) * Math.sin(lon / 2d);
+        return 12742000d * Math.atan2(Math.sqrt(h), Math.sqrt(1d - h));
     }
 
     private void chooseBoundaryType(PlanningBoundaryProfile profile) {
@@ -954,8 +1161,8 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
             renderMissionSync();
         }));
         hubSubscription = DjiDataHub.getInstance().addListener(new DjiDataHub.Listener() {
-            @Override public void onFlightState(@NonNull FlightControllerState state) {
-                post(() -> renderFlightState(state));
+            @Override public void onStatusSnapshot(@NonNull DjiDataHub.StatusSnapshot snapshot) {
+                post(() -> renderStatusSnapshot(snapshot));
             }
         });
     }
@@ -981,45 +1188,46 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
         missionEvidence.clear();
     }
 
-    private void renderFlightState(FlightControllerState state) {
-        flightStateAvailable = true;
-        rthActive = state.isGoingHome();
-        LocationCoordinate2D homeLocation = state.getHomeLocation();
-        boolean reportedHomeValid = state.isHomeLocationSet() && homeLocation != null && homeLocation.isValid();
-        if (reportedHomeValid) {
-            confirmedDjiHome.reconcileReadback(true, homeLocation.getLatitude(),
-                    homeLocation.getLongitude());
+    private void renderStatusSnapshot(@NonNull DjiDataHub.StatusSnapshot snapshot) {
+        FlightControllerState state = snapshot.flightState;
+        flightStateAvailable = state != null;
+        rthActive = state != null && state.isGoingHome();
+        DjiHomeState djiHome = snapshot.djiHome;
+        // DJI Home is a connected-session configuration, not a streaming sample. The hub keeps a
+        // successful command/readback until disconnect, so it must not be downgraded merely
+        // because no newer flight-state callback arrived within the UI freshness interval.
+        homeAvailable = djiHome != null && djiHome.isAvailable();
+        if (rthActive) {
+            home.setText("RTH — " + String.valueOf(state.getGoHomeExecutionState()));
+        } else if (djiHome == null || djiHome.getAvailability() == DjiHomeState.Availability.WAITING_FOR_SAMPLE) {
+            home.setText("CHECKING DJI HOME");
+        } else {
+            home.setText(homeAvailable ? "HOME READY" : "HOME UNAVAILABLE");
         }
-        restoreConfirmedDjiHome();
-        boolean confirmedHomeValid = confirmedDjiHome.isAvailable();
-        boolean homeValid = reportedHomeValid || confirmedHomeValid;
-        homeAvailable = homeValid;
-        home.setText(rthActive ? "RTH — " + String.valueOf(state.getGoHomeExecutionState())
-                : homeValid ? "HOME READY" : "HOME UNAVAILABLE");
-        map.setDjiHome(homeValid ? confirmedDjiHome.getLatitude() : null,
-                homeValid ? confirmedDjiHome.getLongitude() : null);
+        map.setDjiHome(homeAvailable ? djiHome.getLatitude() : null,
+                homeAvailable ? djiHome.getLongitude() : null);
+        if (state == null) {
+            latestAircraftLatitude = null;
+            latestAircraftLongitude = null;
+            latestAircraftLocationElapsedMs = -1L;
+            map.setAircraft(null, null);
+            return;
+        }
         LocationCoordinate3D aircraftLocation = state.getAircraftLocation();
         boolean aircraftValid = aircraftLocation != null && LocationCoordinate2D.isValid(
                 aircraftLocation.getLatitude(), aircraftLocation.getLongitude());
+        latestAircraftLocationElapsedMs = snapshot.flightStateElapsedMs;
+        aircraftValid = aircraftValid && OperateStatusModel.isFresh(latestAircraftLocationElapsedMs,
+                SystemClock.elapsedRealtime());
         latestAircraftLatitude = aircraftValid ? aircraftLocation.getLatitude() : null;
         latestAircraftLongitude = aircraftValid ? aircraftLocation.getLongitude() : null;
         map.setAircraft(latestAircraftLatitude, latestAircraftLongitude);
     }
 
-    private void restoreConfirmedDjiHome() {
-        if (confirmedDjiHome.isAvailable()) return;
-        LocationCoordinate2D confirmed = DjiDataHub.getInstance().getConfirmedDjiHomeLocation();
-        if (confirmed == null || !confirmed.isValid()) return;
-        confirmedDjiHome.confirm(confirmed.getLatitude(), confirmed.getLongitude());
-    }
-
-    private void renderConfirmedDjiHome() {
-        restoreConfirmedDjiHome();
-        boolean valid = confirmedDjiHome.isAvailable();
-        if (!valid) return;
+    private void renderConfirmedDjiHome(double latitude, double longitude) {
         homeAvailable = true;
-        home.setText(rthActive ? "RTH — ACTIVE" : "HOME READY");
-        map.setDjiHome(confirmedDjiHome.getLatitude(), confirmedDjiHome.getLongitude());
+        if (!rthActive) home.setText("HOME READY");
+        map.setDjiHome(latitude, longitude);
     }
 
     private String firstPreflightError(MissionDraft draft) {
@@ -1037,9 +1245,12 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
 
     @Override protected void onAttachedToWindow() {
         super.onAttachedToWindow();
+        DJISampleApplication.getEventBus().register(this);
         FlightReadinessStore.getInstance().start();
         attachHub();
-        renderConfirmedDjiHome();
+        DjiDataHub.getInstance().requestStatusSnapshot();
+        DjiDataHub.getInstance().requestDjiHomeReadback();
+        renderMissionFolder();
         if (!missionListenerAttached) {
             operator.addListener(missionListener);
             missionListenerAttached = true;
@@ -1051,6 +1262,9 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
     }
 
     @Override protected void onDetachedFromWindow() {
+        DJISampleApplication.getEventBus().unregister(this);
+        mapInteraction.clear();
+        boundaryCaptureProfile = null; boundaryCapturePoints.clear();
         if (hubSubscription != null) hubSubscription.close();
         hubSubscription = null;
         if (readinessSubscription != null) readinessSubscription.close();
@@ -1058,6 +1272,17 @@ public final class MissionMvpView extends LinearLayout implements PresentableVie
         if (missionListenerAttached) operator.removeListener(missionListener);
         missionListenerAttached = false;
         super.onDetachedFromWindow();
+    }
+
+    public void discardPage() {
+        map.destroyMap();
+    }
+
+    @Subscribe public void onMissionFolderSelected(MainActivity.MissionFolderSelectedEvent event) {
+        post(() -> {
+            renderMissionFolder();
+            status.setText("Mission folder selected. Saved missions stay local until you explicitly load and upload.");
+        });
     }
 
     @Override public int getDescription() { return R.string.operate_menu_mission; }

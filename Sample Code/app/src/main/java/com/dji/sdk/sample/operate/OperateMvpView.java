@@ -14,10 +14,12 @@ import android.view.MotionEvent;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
 import android.widget.Button;
+import android.widget.AdapterView;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.Spinner;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
@@ -28,16 +30,34 @@ import com.dji.sdk.sample.internal.controller.MainActivity;
 import com.dji.sdk.sample.internal.view.PresentableView;
 import com.dji.sdk.sample.djihub.CallbackMulticaster;
 import com.dji.sdk.sample.djihub.DjiDataHub;
+import com.dji.sdk.sample.djihub.DjiHomeState;
 import com.dji.sdk.sample.transport.ui.TransportView;
 import com.dji.sdk.sample.transport.TransportSessionManager;
+import com.dji.sdk.sample.transport.TransportForegroundService;
+import com.dji.sdk.sample.transport.TransportRuntime;
+import com.dji.sdk.sample.transport.TransportEgressMetrics;
+import com.dji.sdk.sample.recording.LocalPrimaryRecordingManager;
+import com.dji.sdk.sample.recording.RecordingFolderPreferences;
+import com.dji.sdk.sample.recording.RecordingState;
 import com.dji.sdk.sample.operate.fpv.FloatingFpvView;
+import com.dji.sdk.sample.missionplanner.MissionDefaults;
+import com.dji.sdk.sample.missionplanner.MissionDefaultsPreferences;
+import com.dji.sdk.sample.missionplanner.MissionFinishAction;
+import com.dji.sdk.sample.missionplanner.MissionHeadingMode;
+import com.dji.sdk.sample.rtk.NetworkRtkController;
+import com.dji.sdk.sample.rtk.NetworkRtkProfile;
+import com.dji.sdk.sample.rtk.NetworkRtkProfileStore;
+import com.dji.sdk.sample.rtk.NetworkRtkUiState;
 
 import java.util.Locale;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import dji.common.flightcontroller.FlightControllerState;
+import dji.common.error.DJIError;
 import dji.common.airlink.PhysicalSource;
 import dji.common.flightcontroller.LocationCoordinate3D;
 import dji.common.flightcontroller.RTKState;
@@ -46,6 +66,9 @@ import dji.common.gimbal.GimbalState;
 import dji.midware.usb.P3.UsbAccessoryService;
 import dji.sdk.codec.DJICodecManager;
 import dji.sdk.products.Aircraft;
+import dji.sdk.camera.Camera;
+import dji.common.camera.ResolutionAndFrameRate;
+import dji.common.util.CommonCallbacks;
 import dji.sdk.remotecontroller.RemoteController;
 import dji.sdk.sdkmanager.DJISDKManager;
 import dji.sdk.airlink.AirLink;
@@ -63,7 +86,7 @@ import dji.keysdk.callback.ActionCallback;
 public final class OperateMvpView extends LinearLayout implements PresentableView {
     private enum DetailGroup { CONNECTION, POSITIONING, POWER, SAFETY }
     /** Navigation requests emitted by the top-left menu. */
-    public enum Destination { OPERATE, MISSION, TRANSPORT_CONFIGURATION, DJI_CONNECTION, SETTINGS, DEMOS }
+    public enum Destination { OPERATE, MISSION, TRANSPORT_CONFIGURATION, DJI_CONNECTION, RTK, SETTINGS, DEMOS }
 
     /** Host callback for handling an operator menu selection. */
     public interface MenuListener {
@@ -73,9 +96,11 @@ public final class OperateMvpView extends LinearLayout implements PresentableVie
     private MenuListener menuListener;
     private final LinearLayout operatorMenu;
     private final LinearLayout sourcePanel;
+    private final LinearLayout recordingPanel;
     private final LinearLayout gimbalPanel;
     private final ScrollView detailPanel;
     private final View menuButton;
+    private final TextView shellTitle;
     private final TextView primarySource;
     private final TextView primaryStreamStatus;
     private final TextView primaryFrameAge;
@@ -94,6 +119,13 @@ public final class OperateMvpView extends LinearLayout implements PresentableVie
     private final TextView detailTitle;
     private final TextView detailBody;
     private final LinearLayout detailChecklist;
+    /**
+     * Checklist rows must stay attached while live DJI state refreshes. Recreating them on every
+     * refresh can replace a row between ACTION_DOWN and ACTION_UP, which prevents its click from
+     * ever completing on a busy connected aircraft.
+     */
+    private final Map<FlightReadinessSession.ChecklistItem, Button> safetyChecklistButtons =
+            new LinkedHashMap<>();
     private final TextView connectionAttention;
     private final TextView positioningAttention;
     private final TextView powerAttention;
@@ -108,6 +140,10 @@ public final class OperateMvpView extends LinearLayout implements PresentableVie
     private final TextView gimbalPitch;
     private final TextView gimbalRoll;
     private final TextView gimbalYaw;
+    private final TextView recordingState;
+    private final TextView recordingDetail;
+    private final TextView recordingElapsed;
+    private final Button recordingAction;
     private final SurfaceView videoSurface;
     private final SurfaceView fpvVideoSurface;
     private final TextView fpvWarning;
@@ -117,7 +153,9 @@ public final class OperateMvpView extends LinearLayout implements PresentableVie
     private DJICodecManager codecManager;
     private DJICodecManager fpvCodecManager;
     private CallbackMulticaster.Subscription hubSubscription;
+    private DjiDataHub.PrimaryVideoSubscription primaryVideoSubscription;
     private CallbackMulticaster.Subscription readinessSubscription;
+    private CallbackMulticaster.Subscription recordingSubscription;
     private final AtomicBoolean primarySignalPostPending = new AtomicBoolean();
     private final AtomicBoolean telemetryRenderPosted = new AtomicBoolean();
     private int displayedGimbalIndex = -1;
@@ -141,10 +179,14 @@ public final class OperateMvpView extends LinearLayout implements PresentableVie
     private volatile long lastFpvFrameElapsedMs = -1L;
     private String controllerConnection = "CONTROLLER --";
     private DetailGroup expandedDetail;
-    private String connectionDetail = "--";
-    private String positioningDetail = "--";
+    private final OperateStatusDetailState detailState = new OperateStatusDetailState();
     private String powerDetail = "--";
     private final LowBatteryAdvisoryPreferences lowBatteryPreferences;
+    private final MissionDefaultsPreferences missionDefaultsPreferences;
+    private final PrimaryVideoProfilePreferences primaryVideoProfilePreferences;
+    private final NetworkRtkProfileStore networkRtkProfileStore;
+    private final NetworkRtkController networkRtkController = new NetworkRtkController();
+    private final OperateShellState shellState = new OperateShellState();
     private LowBatteryAdvisory.Severity lastLandingAdvisorySeverity;
 
     private final Runnable videoHealthCheck = new Runnable() {
@@ -152,6 +194,7 @@ public final class OperateMvpView extends LinearLayout implements PresentableVie
             renderPrimaryFreshness();
             renderFpvFreshness();
             refreshControllerConnection();
+            renderRecordingSnapshot(LocalPrimaryRecordingManager.getInstance().snapshot(getContext()));
             mainHandler.postDelayed(this, 500L);
         }
     };
@@ -164,12 +207,17 @@ public final class OperateMvpView extends LinearLayout implements PresentableVie
         setClickable(true);
         LayoutInflater.from(context).inflate(R.layout.view_operate_mvp, this, true);
         lowBatteryPreferences = new LowBatteryAdvisoryPreferences(context);
+        missionDefaultsPreferences = new MissionDefaultsPreferences(context);
+        primaryVideoProfilePreferences = new PrimaryVideoProfilePreferences(context);
+        networkRtkProfileStore = new NetworkRtkProfileStore(context);
 
         operatorMenu = findViewById(R.id.operate_mvp_menu_panel);
         sourcePanel = findViewById(R.id.operate_mvp_source_panel);
+        recordingPanel = findViewById(R.id.operate_mvp_recording_panel);
         gimbalPanel = findViewById(R.id.operate_mvp_gimbal_panel);
         detailPanel = findViewById(R.id.operate_mvp_detail_panel);
         menuButton = findViewById(R.id.operate_mvp_menu_button);
+        shellTitle = findViewById(R.id.operate_mvp_operate_label);
         primarySource = findViewById(R.id.operate_mvp_primary_source);
         primaryStreamStatus = findViewById(R.id.operate_mvp_primary_stream_status);
         primaryFrameAge = findViewById(R.id.operate_mvp_primary_frame_age);
@@ -202,6 +250,10 @@ public final class OperateMvpView extends LinearLayout implements PresentableVie
         gimbalPitch = findViewById(R.id.operate_mvp_gimbal_pitch);
         gimbalRoll = findViewById(R.id.operate_mvp_gimbal_roll);
         gimbalYaw = findViewById(R.id.operate_mvp_gimbal_yaw);
+        recordingState = findViewById(R.id.operate_mvp_recording_state);
+        recordingDetail = findViewById(R.id.operate_mvp_recording_detail);
+        recordingElapsed = findViewById(R.id.operate_mvp_recording_elapsed);
+        recordingAction = findViewById(R.id.operate_mvp_recording_action);
         videoSurface = findViewById(R.id.operate_mvp_video_surface);
         videoContent = findViewById(R.id.operate_mvp_video_content);
         pageOverlay = findViewById(R.id.operate_mvp_page_overlay);
@@ -257,8 +309,10 @@ public final class OperateMvpView extends LinearLayout implements PresentableVie
         });
 
         menuButton.setOnClickListener(view -> toggleExclusive(operatorMenu));
-        findViewById(R.id.operate_mvp_operate_label).setOnClickListener(view -> toggleExclusive(operatorMenu));
+        shellTitle.setOnClickListener(view -> toggleExclusive(operatorMenu));
         findViewById(R.id.operate_mvp_sources_button).setOnClickListener(view -> toggleExclusive(sourcePanel));
+        findViewById(R.id.operate_mvp_recording_button).setOnClickListener(view -> toggleExclusive(recordingPanel));
+        recordingAction.setOnClickListener(view -> toggleRecording());
         findViewById(R.id.operate_mvp_connection_detail_button).setOnClickListener(
                 view -> toggleDetail(DetailGroup.CONNECTION));
         findViewById(R.id.operate_mvp_positioning_detail_button).setOnClickListener(
@@ -266,13 +320,13 @@ public final class OperateMvpView extends LinearLayout implements PresentableVie
         findViewById(R.id.operate_mvp_power_detail_button).setOnClickListener(
                 view -> toggleDetail(DetailGroup.POWER));
         findViewById(R.id.operate_mvp_readiness_connection).setOnClickListener(
-                view -> showDetail(DetailGroup.CONNECTION));
+                view -> showDetail(DetailGroup.CONNECTION, false));
         findViewById(R.id.operate_mvp_readiness_navigation).setOnClickListener(
-                view -> showDetail(DetailGroup.POSITIONING));
+                view -> showDetail(DetailGroup.POSITIONING, false));
         findViewById(R.id.operate_mvp_readiness_power).setOnClickListener(
-                view -> showDetail(DetailGroup.POWER));
+                view -> showDetail(DetailGroup.POWER, false));
         findViewById(R.id.operate_mvp_readiness_safety).setOnClickListener(
-                view -> showDetail(DetailGroup.SAFETY));
+                view -> showDetail(DetailGroup.SAFETY, false));
         findViewById(R.id.operate_mvp_gimbal_cell).setOnClickListener(view -> toggle(gimbalPanel));
         findViewById(R.id.operate_mvp_menu_operate).setOnClickListener(
                 view -> selectDestination(Destination.OPERATE));
@@ -282,6 +336,8 @@ public final class OperateMvpView extends LinearLayout implements PresentableVie
                 view -> selectDestination(Destination.TRANSPORT_CONFIGURATION));
         findViewById(R.id.operate_mvp_menu_dji_connection).setOnClickListener(
                 view -> selectDestination(Destination.DJI_CONNECTION));
+        findViewById(R.id.operate_mvp_menu_rtk).setOnClickListener(
+                view -> selectDestination(Destination.RTK));
         findViewById(R.id.operate_mvp_menu_settings).setOnClickListener(
                 view -> selectDestination(Destination.SETTINGS));
         findViewById(R.id.operate_mvp_menu_demos).setOnClickListener(
@@ -345,6 +401,7 @@ public final class OperateMvpView extends LinearLayout implements PresentableVie
 
     /** Shows a non-flight page without removing the live status chrome from this operator shell. */
     public void showPage(@NonNull View page) {
+        discardPageOverlay();
         pageOverlay.removeAllViews();
         if (page.getParent() instanceof ViewGroup) ((ViewGroup) page.getParent()).removeView(page);
         pageOverlay.addView(page, new FrameLayout.LayoutParams(
@@ -355,9 +412,19 @@ public final class OperateMvpView extends LinearLayout implements PresentableVie
 
     /** Returns the centre panel to the primary/FPV video layout. */
     public void showOperatePage() {
+        discardPageOverlay();
         pageOverlay.removeAllViews();
         pageOverlay.setVisibility(GONE);
         videoContent.setVisibility(VISIBLE);
+        shellState.showOperate();
+        renderShellTitle();
+    }
+
+    private void discardPageOverlay() {
+        for (int index = 0; index < pageOverlay.getChildCount(); index++) {
+            View child = pageOverlay.getChildAt(index);
+            if (child instanceof MissionMvpView) ((MissionMvpView) child).discardPage();
+        }
     }
 
     /** Lets the host keep Android Back inside the persistent operator shell. */
@@ -387,18 +454,147 @@ public final class OperateMvpView extends LinearLayout implements PresentableVie
 
     private void handleDefaultDestination(@NonNull Destination destination) {
         if (destination == Destination.MISSION) {
+            shellState.show(OperateShellState.Page.MISSION);
+            renderShellTitle();
             showPage(new MissionMvpView(getContext()));
         } else if (destination == Destination.TRANSPORT_CONFIGURATION) {
+            shellState.show(OperateShellState.Page.TRANSPORT);
+            renderShellTitle();
             showPage(new TransportView(getContext()));
         } else if (destination == Destination.DJI_CONNECTION && getContext() instanceof MainActivity) {
             MainActivity activity = (MainActivity) getContext();
             activity.onBackPressed();
             activity.onBackPressed();
+        } else if (destination == Destination.RTK) {
+            shellState.show(OperateShellState.Page.RTK);
+            renderShellTitle();
+            showPage(createNetworkRtkPage());
         } else if (destination == Destination.SETTINGS) {
+            shellState.show(OperateShellState.Page.SETTINGS);
+            renderShellTitle();
             showPage(createSettingsPage());
         } else if (destination == Destination.DEMOS && getContext() instanceof MainActivity) {
             ((MainActivity) getContext()).showSampleDemos();
         }
+    }
+
+    private void renderShellTitle() {
+        shellTitle.setText(shellState.getTitle());
+    }
+
+    /** Custom NTRIP configuration and live DJI state. It owns no DJI callback. */
+    private View createNetworkRtkPage() {
+        ScrollView scroll = new ScrollView(getContext());
+        LinearLayout content = new LinearLayout(getContext()); content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(26), dp(22), dp(26), dp(22)); content.setBackgroundColor(0xFFE8F3FA);
+        TextView title = rtkText("CUSTOM NETWORK RTK", 20f, 0xFF162A36); content.addView(title);
+        TextView hint = rtkText("NTRIP profile is stored only on this tablet. Connect and disconnect are explicit actions.", 12f, 0xFF667B87);
+        hint.setPadding(0, dp(4), 0, dp(12)); content.addView(hint);
+        NetworkRtkProfile saved = networkRtkProfileStore.load();
+        EditText host = rtkInput("NTRIP Host", saved == null ? "" : saved.host, false);
+        EditText port = rtkInput("Port", String.valueOf(saved == null ? 2101 : saved.port), true);
+        EditText user = rtkInput("User", saved == null ? "" : saved.user, false);
+        EditText password = rtkInput("Password", saved == null ? "" : saved.password, false);
+        password.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        EditText mount = rtkInput("Mountpoint", saved == null ? "" : saved.mountpoint, false);
+        content.addView(host); content.addView(port); content.addView(user); content.addView(password); content.addView(mount);
+        TextView action = rtkText("NOT CONNECTED", 12f, 0xFF667B87); action.setPadding(0, dp(6), 0, dp(4)); content.addView(action);
+        LinearLayout actions = new LinearLayout(getContext()); actions.setOrientation(LinearLayout.HORIZONTAL);
+        Button save = new Button(getContext()); save.setText("SAVE CONFIGURATION");
+        Button connect = new Button(getContext()); connect.setText("CONNECT RTK");
+        Button disconnect = new Button(getContext()); disconnect.setText("DISCONNECT");
+        actions.addView(save); actions.addView(connect); actions.addView(disconnect); content.addView(actions);
+        TextView statusTitle = rtkText("LIVE STATUS", 14f, 0xFF162A36); statusTitle.setPadding(0, dp(24), 0, dp(6)); content.addView(statusTitle);
+        TextView live = rtkText("WAITING FOR DJI RTK SAMPLE", 13f, 0xFF162A36); content.addView(live);
+        TextView table = rtkText("", 12f, 0xFF425866); table.setPadding(0, dp(8), 0, dp(24)); content.addView(table);
+        View.OnClickListener saveProfile = view -> {
+            NetworkRtkProfile profile = readNetworkRtkProfile(host, port, user, password, mount, action);
+            if (profile != null && networkRtkProfileStore.save(profile)) action.setText("Saved locally. No DJI connection was started.");
+            else if (profile != null) action.setText("Could not encrypt and save this profile.");
+        };
+        save.setOnClickListener(saveProfile);
+        connect.setOnClickListener(view -> {
+            NetworkRtkProfile profile = readNetworkRtkProfile(host, port, user, password, mount, action);
+            if (profile == null) return;
+            action.setText("CONNECTING — waiting for DJI result...");
+            networkRtkController.connect(profile, (accepted, detail) -> mainHandler.post(() -> {
+                if (isActiveNetworkRtkPage(scroll)) action.setText(
+                        (accepted ? "CONNECT REQUEST ACCEPTED: " : "CONNECT FAILED: ") + detail);
+            }));
+        });
+        disconnect.setOnClickListener(view -> {
+            action.setText("DISCONNECTING — waiting for DJI result...");
+            networkRtkController.disconnect((accepted, detail) -> mainHandler.post(() -> {
+                if (isActiveNetworkRtkPage(scroll)) action.setText(
+                        (accepted ? "DISCONNECT REQUEST ACCEPTED: " : "DISCONNECT FAILED: ") + detail);
+            }));
+        });
+        Runnable refresh = new Runnable() { @Override public void run() {
+            if (!isActiveNetworkRtkPage(scroll)) return;
+            DjiDataHub.StatusSnapshot snapshot = pendingStatusSnapshot;
+            if (snapshot != null) renderNetworkRtkStatus(live, table, snapshot);
+            mainHandler.postDelayed(this, 500L);
+        }};
+        mainHandler.post(refresh);
+        scroll.addView(content); return scroll;
+    }
+
+    private boolean isActiveNetworkRtkPage(View page) {
+        return pageOverlay.getVisibility() == VISIBLE && page.getParent() == pageOverlay;
+    }
+
+    private EditText rtkInput(String hint, String value, boolean number) {
+        EditText input = new EditText(getContext()); input.setSingleLine(true); input.setHint(hint); input.setText(value);
+        if (number) input.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        input.setTextSize(14f); return input;
+    }
+
+    private TextView rtkText(String value, float size, int color) {
+        TextView view = new TextView(getContext()); view.setText(value); view.setTextSize(size); view.setTextColor(color); return view;
+    }
+
+    private NetworkRtkProfile readNetworkRtkProfile(EditText host, EditText port, EditText user,
+            EditText password, EditText mountpoint, TextView result) {
+        try {
+            NetworkRtkProfile profile = new NetworkRtkProfile(host.getText().toString(),
+                    Integer.parseInt(port.getText().toString().trim()), user.getText().toString(),
+                    password.getText().toString(), mountpoint.getText().toString());
+            if (!profile.isValid()) { result.setText(profile.validationError()); return null; }
+            return profile;
+        } catch (NumberFormatException error) { result.setText("Port must be between 1 and 65535."); return null; }
+    }
+
+    private void renderNetworkRtkStatus(TextView live, TextView table, DjiDataHub.StatusSnapshot snapshot) {
+        RTKState rtk = snapshot.rtkState;
+        long now = SystemClock.elapsedRealtime();
+        boolean rtkFresh = OperateStatusModel.isFresh(snapshot.rtkStateElapsedMs, now);
+        String channel = OperateStatusModel.isFresh(snapshot.rtkNetworkServiceStateElapsedMs, now)
+                ? NetworkRtkUiState.channel(snapshot.rtkNetworkServiceState) : "WAITING / STALE";
+        String source = OperateStatusModel.isFresh(snapshot.rtkReferenceStationSourceElapsedMs, now)
+                ? NetworkRtkUiState.source(snapshot.rtkReferenceStationSource) : "WAITING / STALE";
+        live.setText("CHANNEL " + channel + "\nSOURCE " + source
+                + "\nPOSITIONING " + (rtkFresh ? NetworkRtkUiState.solution(rtk) + " · "
+                + NetworkRtkUiState.inUse(rtk) : "WAITING / STALE"));
+        if (!rtkFresh || rtk == null) { table.setText("Coordinates and satellites: --\nNo fresh DJI RTK sample."); return; }
+        dji.common.model.LocationCoordinate2D mobile = rtk.getMobileStationLocation();
+        dji.common.model.LocationCoordinate2D base = rtk.getBaseStationLocation();
+        table.setText("                         AIRCRAFT / MOBILE          REFERENCE / BASE"
+                + "\nLatitude     " + rtkCoordinate(mobile, true) + "                 " + rtkCoordinate(base, true)
+                + "\nLongitude  " + rtkCoordinate(mobile, false) + "                 " + rtkCoordinate(base, false)
+                + String.format(Locale.US, "\nAltitude      %.2f m                         %.2f m", rtk.getMobileStationAltitude(), rtk.getBaseStationAltitude())
+                + "\n\nGPS             " + rtkCount(rtk.getMobileStationReceiver1GPSInfo()) + "                              " + rtkCount(rtk.getBaseStationReceiverGPSInfo())
+                + "\nBeiDou       " + rtkCount(rtk.getMobileStationReceiver1BeiDouInfo()) + "                              " + rtkCount(rtk.getBaseStationReceiverBeiDouInfo())
+                + "\nGLONASS   " + rtkCount(rtk.getMobileStationReceiver1GLONASSInfo()) + "                              " + rtkCount(rtk.getBaseStationReceiverGLONASSInfo())
+                + "\nGalileo       " + rtkCount(rtk.getMobileStationReceiver1GalileoInfo()) + "                              " + rtkCount(rtk.getBaseStationReceiverGalileoInfo()));
+    }
+
+    private static String rtkCoordinate(dji.common.model.LocationCoordinate2D coordinate, boolean latitude) {
+        if (coordinate == null || !coordinate.isValid()) return "--";
+        return String.format(Locale.US, "%.7f", latitude ? coordinate.getLatitude() : coordinate.getLongitude());
+    }
+
+    private static String rtkCount(dji.common.flightcontroller.ReceiverInfo info) {
+        return info == null || !info.isConstellationSupported() ? "--" : String.valueOf(info.getSatelliteCount());
     }
 
     private View createSettingsPage() {
@@ -436,7 +632,305 @@ public final class OperateMvpView extends LinearLayout implements PresentableVie
             }
         });
         content.addView(save, new LinearLayout.LayoutParams(dp(220), LinearLayout.LayoutParams.WRAP_CONTENT));
+        TextView recordingTitle = new TextView(getContext());
+        recordingTitle.setText("LOCAL RECORDING"); recordingTitle.setTextSize(14f); recordingTitle.setTextColor(0xFF162A36);
+        recordingTitle.setPadding(0, dp(28), 0, dp(4)); content.addView(recordingTitle);
+        TextView recordingFolder = new TextView(getContext()); recordingFolder.setTextSize(12f); recordingFolder.setTextColor(0xFF667B87);
+        recordingFolder.setText("PRIMARY MP4 + telemetry sidecar: " + new RecordingFolderPreferences(getContext()).displayName());
+        content.addView(recordingFolder);
+        Button chooseRecordingFolder = new Button(getContext()); chooseRecordingFolder.setText("CHOOSE RECORDING FOLDER");
+        chooseRecordingFolder.setOnClickListener(view -> {
+            if (getContext() instanceof MainActivity) ((MainActivity) getContext()).selectRecordingFolder();
+        });
+        content.addView(chooseRecordingFolder, new LinearLayout.LayoutParams(dp(280), LinearLayout.LayoutParams.WRAP_CONTENT));
+        TextView missionTitle = new TextView(getContext());
+        missionTitle.setText("NEW MISSION DEFAULTS"); missionTitle.setTextSize(14f); missionTitle.setTextColor(0xFF162A36);
+        missionTitle.setPadding(0, dp(28), 0, dp(4)); content.addView(missionTitle);
+        TextView missionHint = new TextView(getContext());
+        missionHint.setText("Applied only when you select NEW DRAFT. Existing missions are unchanged.");
+        missionHint.setTextSize(12f); missionHint.setTextColor(0xFF667B87); content.addView(missionHint);
+        MissionDefaults defaults = missionDefaultsPreferences.load();
+        EditText defaultAltitude = new EditText(getContext()); defaultAltitude.setSingleLine(true);
+        defaultAltitude.setInputType(android.text.InputType.TYPE_CLASS_NUMBER | android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        defaultAltitude.setHint("Altitude (m)"); defaultAltitude.setText(String.format(Locale.US, "%.1f", defaults.getAltitudeMeters()));
+        content.addView(defaultAltitude, new LinearLayout.LayoutParams(dp(180), LinearLayout.LayoutParams.WRAP_CONTENT));
+        EditText defaultSpeed = new EditText(getContext()); defaultSpeed.setSingleLine(true);
+        defaultSpeed.setInputType(android.text.InputType.TYPE_CLASS_NUMBER | android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        defaultSpeed.setHint("Speed (m/s)"); defaultSpeed.setText(String.format(Locale.US, "%.1f", defaults.getSpeedMetersPerSecond()));
+        content.addView(defaultSpeed, new LinearLayout.LayoutParams(dp(180), LinearLayout.LayoutParams.WRAP_CONTENT));
+        TextView headingLabel = new TextView(getContext()); headingLabel.setText("HEADING");
+        headingLabel.setTextSize(12f); headingLabel.setTextColor(0xFF667B87); content.addView(headingLabel);
+        Spinner defaultHeading = new Spinner(getContext());
+        defaultHeading.setAdapter(new android.widget.ArrayAdapter<>(getContext(), android.R.layout.simple_spinner_dropdown_item,
+                new String[]{"AUTO", "INITIAL DIRECTION", "REMOTE CONTROLLER"}));
+        defaultHeading.setSelection(defaults.getHeadingMode().ordinal()); content.addView(defaultHeading);
+        TextView finishLabel = new TextView(getContext()); finishLabel.setText("FINISH ACTION");
+        finishLabel.setTextSize(12f); finishLabel.setTextColor(0xFF667B87); content.addView(finishLabel);
+        Spinner defaultFinish = new Spinner(getContext());
+        defaultFinish.setAdapter(new android.widget.ArrayAdapter<>(getContext(), android.R.layout.simple_spinner_dropdown_item,
+                new String[]{"Hover at final waypoint", "Return and land at DJI Home", "Land at final waypoint"}));
+        defaultFinish.setSelection(defaults.getFinishAction().ordinal()); content.addView(defaultFinish);
+        Button saveMissionDefaults = new Button(getContext()); saveMissionDefaults.setText("SAVE NEW MISSION DEFAULTS");
+        saveMissionDefaults.setOnClickListener(view -> {
+            try {
+                MissionDefaults next = new MissionDefaults(Float.parseFloat(defaultAltitude.getText().toString().trim()),
+                        Float.parseFloat(defaultSpeed.getText().toString().trim()),
+                        MissionHeadingMode.values()[defaultHeading.getSelectedItemPosition()],
+                        MissionFinishAction.values()[defaultFinish.getSelectedItemPosition()]);
+                if (!missionDefaultsPreferences.save(next)) throw new IllegalStateException();
+                missionHint.setText("Saved locally. Applied only when you select NEW DRAFT. Existing missions are unchanged.");
+            } catch (RuntimeException error) {
+                missionHint.setText("Enter altitude of 0 m or more and speed from 0.1 to 15 m/s. Existing defaults were unchanged.");
+            }
+        });
+        content.addView(saveMissionDefaults, new LinearLayout.LayoutParams(dp(280), LinearLayout.LayoutParams.WRAP_CONTENT));
+        TextView cameraTitle = new TextView(getContext());
+        cameraTitle.setText("PAYLOAD RECORDING PROFILE"); cameraTitle.setTextSize(14f); cameraTitle.setTextColor(0xFF162A36);
+        cameraTitle.setPadding(0, dp(28), 0, dp(4)); content.addView(cameraTitle);
+        TextView cameraTarget = settingsDetailText(); content.addView(cameraTarget);
+        TextView cameraCurrent = settingsDetailText(); content.addView(cameraCurrent);
+        TextView cameraSaved = settingsDetailText(); content.addView(cameraSaved);
+        TextView resolutionLabel = settingsFieldLabel("RESOLUTION"); content.addView(resolutionLabel);
+        Spinner resolutionSelector = new Spinner(getContext()); resolutionSelector.setEnabled(false); content.addView(resolutionSelector);
+        TextView frameRateLabel = settingsFieldLabel("FRAME RATE"); content.addView(frameRateLabel);
+        Spinner frameRateSelector = new Spinner(getContext()); frameRateSelector.setEnabled(false); content.addView(frameRateSelector);
+        TextView cameraSelection = settingsDetailText(); content.addView(cameraSelection);
+        LinearLayout videoActions = new LinearLayout(getContext()); videoActions.setOrientation(LinearLayout.HORIZONTAL);
+        Button saveVideoProfile = new Button(getContext()); saveVideoProfile.setText("SAVE PREFERENCE"); saveVideoProfile.setEnabled(false);
+        videoActions.addView(saveVideoProfile, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        Button applyVideoProfile = new Button(getContext()); applyVideoProfile.setText("APPLY TO PAYLOAD"); applyVideoProfile.setEnabled(false);
+        videoActions.addView(applyVideoProfile, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        content.addView(videoActions, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        configureVideoProfileControls(cameraTarget, cameraCurrent, cameraSaved, cameraSelection,
+                resolutionSelector, frameRateSelector, saveVideoProfile, applyVideoProfile);
+        TextView liveTitle = new TextView(getContext());
+        liveTitle.setText("PRIMARY LIVE FEED"); liveTitle.setTextSize(14f); liveTitle.setTextColor(0xFF162A36);
+        liveTitle.setPadding(0, dp(24), 0, dp(4)); content.addView(liveTitle);
+        TextView liveFeed = settingsDetailText(); content.addView(liveFeed);
+        Runnable refreshLiveFeed = new Runnable() {
+            @Override public void run() {
+                renderPrimaryLiveFeed(liveFeed);
+                liveFeed.postDelayed(this, 1_000L);
+            }
+        };
+        liveFeed.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
+            @Override public void onViewAttachedToWindow(View view) { refreshLiveFeed.run(); }
+            @Override public void onViewDetachedFromWindow(View view) { liveFeed.removeCallbacks(refreshLiveFeed); }
+        });
+        renderPrimaryLiveFeed(liveFeed);
         scroll.addView(content); return scroll;
+    }
+
+    private TextView settingsDetailText() {
+        TextView value = new TextView(getContext());
+        value.setTextSize(12f); value.setTextColor(0xFF667B87);
+        value.setPadding(0, dp(2), 0, dp(2));
+        return value;
+    }
+
+    private TextView settingsFieldLabel(String value) {
+        TextView label = new TextView(getContext());
+        label.setText(value); label.setTextSize(12f); label.setTextColor(0xFF667B87);
+        label.setPadding(0, dp(12), 0, 0);
+        return label;
+    }
+
+    private void configureVideoProfileControls(TextView targetStatus, TextView currentStatus, TextView savedStatus,
+                                               TextView selectionStatus, Spinner resolutionSelector,
+                                               Spinner frameRateSelector, Button save, Button apply) {
+        PrimaryVideoProfile saved = primaryVideoProfilePreferences.load();
+        savedStatus.setText("SAVED PREFERENCE — " + PrimaryVideoProfileLabels.profile(saved));
+        String route = DjiDataHub.getInstance().getSource(DjiDataHub.Feed.PRIMARY);
+        targetStatus.setText("RECORDING TARGET — " + PrimaryCameraBinding.label() + " · CAMERA "
+                + PrimaryCameraBinding.componentIndex() + "\nPRIMARY ROUTE — " + route);
+        Aircraft aircraft = DJISampleApplication.getAircraftInstance();
+        if (aircraft == null || !aircraft.isConnected()) {
+            currentStatus.setText("DJI CURRENT — UNAVAILABLE (connect the left Zenmuse payload)");
+            selectionStatus.setText("SELECTED — UNAVAILABLE until supported payload profiles are available.");
+            return;
+        }
+        Camera camera = aircraft.getCameraWithComponentIndex(PrimaryCameraBinding.componentIndex());
+        if (camera == null) {
+            currentStatus.setText("DJI CURRENT — UNAVAILABLE (" + PrimaryCameraBinding.label() + " not connected)");
+            selectionStatus.setText("SELECTED — UNAVAILABLE until the configured Primary payload is available.");
+            return;
+        }
+        String displayName = camera.getDisplayName();
+        if (displayName != null && !displayName.trim().isEmpty()) {
+            targetStatus.setText("RECORDING TARGET — " + PrimaryCameraBinding.label() + " · CAMERA "
+                    + PrimaryCameraBinding.componentIndex() + " · " + displayName
+                    + "\nPRIMARY ROUTE — " + route);
+        }
+        if (camera.getCapabilities() == null || camera.getCapabilities().videoResolutionAndFrameRateRange() == null) {
+            currentStatus.setText("DJI CURRENT — UNAVAILABLE (camera capabilities not ready)"); return;
+        }
+        ResolutionAndFrameRate[] profiles = camera.getCapabilities().videoResolutionAndFrameRateRange();
+        if (profiles.length == 0) { currentStatus.setText("DJI CURRENT — UNAVAILABLE (no supported profiles)"); return; }
+        PrimaryVideoProfileSelection choices = primaryVideoProfileSelection(profiles);
+        List<String> resolutionIds = choices.resolutions();
+        if (resolutionIds.isEmpty()) { currentStatus.setText("DJI CURRENT — UNAVAILABLE (no valid supported profiles)"); return; }
+        String[] resolutionLabels = new String[resolutionIds.size()];
+        for (int index = 0; index < resolutionIds.size(); index++) resolutionLabels[index] = choices.labelForResolution(resolutionIds.get(index));
+        resolutionSelector.setAdapter(new android.widget.ArrayAdapter<>(getContext(), android.R.layout.simple_spinner_dropdown_item, resolutionLabels));
+        final boolean[] binding = {true};
+        final boolean[] userSelected = {false};
+        final boolean[] requirePayloadSelection = {saved != null && !PrimaryCameraBinding.matches(saved)};
+        final PrimaryVideoProfile[] selected = {!requirePayloadSelection[0] && saved != null && choices.resolve(saved) != null
+                ? saved : choices.frameRatesFor(resolutionIds.get(0)).get(0).profile};
+        final Runnable updateSelectionText = () -> {
+            PrimaryVideoProfileSelection.Choice choice = choices.resolve(selected[0]);
+            selectionStatus.setText(choice == null ? "SELECTED — UNAVAILABLE"
+                    : "SELECTED — " + choice.resolutionLabel + " · " + choice.frameRateLabel
+                    + "\nPress APPLY TO PAYLOAD to change the camera.");
+        };
+        final Runnable populateFrameRates = () -> {
+            String resolutionId = resolutionIds.get(resolutionSelector.getSelectedItemPosition());
+            List<PrimaryVideoProfileSelection.Choice> frameRates = choices.frameRatesFor(resolutionId);
+            String[] labels = new String[frameRates.size()];
+            int chosenIndex = 0;
+            for (int index = 0; index < frameRates.size(); index++) {
+                labels[index] = frameRates.get(index).frameRateLabel;
+                if (frameRates.get(index).profile.sameSelection(selected[0])) chosenIndex = index;
+            }
+            binding[0] = true;
+            frameRateSelector.setAdapter(new android.widget.ArrayAdapter<>(getContext(), android.R.layout.simple_spinner_dropdown_item, labels));
+            frameRateSelector.setSelection(chosenIndex);
+            selected[0] = frameRates.get(chosenIndex).profile;
+            binding[0] = false;
+            updateSelectionText.run();
+        };
+        int initialResolution = resolutionIds.indexOf(selected[0].getResolutionId());
+        resolutionSelector.setSelection(initialResolution < 0 ? 0 : initialResolution);
+        populateFrameRates.run();
+        resolutionSelector.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                if (binding[0]) return;
+                userSelected[0] = true; requirePayloadSelection[0] = false; apply.setEnabled(true);
+                populateFrameRates.run();
+            }
+            @Override public void onNothingSelected(AdapterView<?> parent) { }
+        });
+        frameRateSelector.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                if (binding[0]) return;
+                String resolutionId = resolutionIds.get(resolutionSelector.getSelectedItemPosition());
+                List<PrimaryVideoProfileSelection.Choice> rates = choices.frameRatesFor(resolutionId);
+                if (position >= 0 && position < rates.size()) {
+                    userSelected[0] = true; requirePayloadSelection[0] = false; apply.setEnabled(true);
+                    selected[0] = rates.get(position).profile; updateSelectionText.run();
+                }
+            }
+            @Override public void onNothingSelected(AdapterView<?> parent) { }
+        });
+        resolutionSelector.setEnabled(true); frameRateSelector.setEnabled(true); save.setEnabled(true);
+        apply.setEnabled(!requirePayloadSelection[0]);
+        PrimaryVideoProfileSelection.Choice savedChoice = choices.resolve(saved);
+        savedStatus.setText(saved == null ? "SAVED PREFERENCE — NONE"
+                : (!PrimaryCameraBinding.matches(saved) ? "SAVED PREFERENCE — select again for " + PrimaryCameraBinding.label()
+                : (savedChoice == null ? "SAVED PREFERENCE — unavailable for this payload"
+                : "SAVED PREFERENCE — " + savedChoice.resolutionLabel + " · " + savedChoice.frameRateLabel)));
+        currentStatus.setText("DJI CURRENT — READING " + PrimaryCameraBinding.label() + "…");
+        camera.getVideoResolutionAndFrameRate(new CommonCallbacks.CompletionCallbackWith<ResolutionAndFrameRate>() {
+            @Override public void onSuccess(ResolutionAndFrameRate current) { post(() -> {
+                PrimaryVideoProfile reported = profileOf(current);
+                PrimaryVideoProfileSelection.Choice currentChoice = choices.resolve(reported);
+                currentStatus.setText(currentChoice == null ? "DJI CURRENT — " + current
+                        : "DJI CURRENT — " + currentChoice.resolutionLabel + " · " + currentChoice.frameRateLabel);
+                if (!userSelected[0] && saved == null && currentChoice != null) {
+                    binding[0] = true;
+                    selected[0] = reported;
+                    resolutionSelector.setSelection(resolutionIds.indexOf(reported.getResolutionId()));
+                    binding[0] = false;
+                    populateFrameRates.run();
+                }
+            }); }
+            @Override public void onFailure(DJIError error) { post(() -> currentStatus.setText("DJI CURRENT — UNAVAILABLE: " + error.getDescription())); }
+        });
+        save.setOnClickListener(view -> {
+            PrimaryVideoProfile scopedSelection = selected[0].forTarget(PrimaryCameraBinding.targetId());
+            if (primaryVideoProfilePreferences.save(scopedSelection)) {
+                PrimaryVideoProfileSelection.Choice choice = choices.resolve(selected[0]);
+                savedStatus.setText("SAVED PREFERENCE — " + choice.resolutionLabel + " · " + choice.frameRateLabel);
+            } else savedStatus.setText("SAVED PREFERENCE — FAILED; previous preference was kept.");
+        });
+        apply.setOnClickListener(view -> {
+            ResolutionAndFrameRate requested = djiProfileFor(profiles, selected[0]);
+            if (requested == null) {
+                currentStatus.setText("DJI CURRENT — cannot apply an unsupported profile.");
+                return;
+            }
+            apply.setEnabled(false); currentStatus.setText("DJI CURRENT — APPLYING…");
+            camera.setVideoResolutionAndFrameRate(requested, error -> post(() -> {
+                apply.setEnabled(true);
+                if (error != null) { currentStatus.setText("DJI CURRENT — APPLY FAILED: " + error.getDescription()); return; }
+                camera.getVideoResolutionAndFrameRate(new CommonCallbacks.CompletionCallbackWith<ResolutionAndFrameRate>() {
+                    @Override public void onSuccess(ResolutionAndFrameRate current) { post(() -> {
+                        PrimaryVideoProfileSelection.Choice reported = choices.resolve(profileOf(current));
+                        currentStatus.setText(requested.equals(current)
+                                ? "DJI CURRENT — " + (reported == null ? current : reported.resolutionLabel + " · " + reported.frameRateLabel) + " (APPLIED)"
+                                : "DJI CURRENT — NOT VERIFIED; DJI REPORTS " + current);
+                        if (requested.equals(current)) selectionStatus.setText("SELECTED — "
+                                + (reported == null ? PrimaryVideoProfileLabels.profile(profileOf(current))
+                                : reported.resolutionLabel + " · " + reported.frameRateLabel)
+                                + "\nApplied and verified by the payload.");
+                    }); }
+                    @Override public void onFailure(DJIError readError) { post(() -> currentStatus.setText("DJI CURRENT — NOT VERIFIED: " + readError.getDescription())); }
+                });
+            }));
+        });
+    }
+
+    private static PrimaryVideoProfileSelection primaryVideoProfileSelection(ResolutionAndFrameRate[] profiles) {
+        List<PrimaryVideoProfileSelection.Choice> choices = new ArrayList<>();
+        for (ResolutionAndFrameRate profile : profiles) {
+            if (profile == null || profile.getResolution() == null || profile.getFrameRate() == null) continue;
+            choices.add(new PrimaryVideoProfileSelection.Choice(profileOf(profile), resolutionDisplay(profile), frameRateDisplay(profile)));
+        }
+        return new PrimaryVideoProfileSelection(choices);
+    }
+
+    private static PrimaryVideoProfile profileOf(ResolutionAndFrameRate profile) {
+        return new PrimaryVideoProfile(profile.getResolution().name(), profile.getFrameRate().name());
+    }
+
+    private static ResolutionAndFrameRate djiProfileFor(ResolutionAndFrameRate[] candidates, PrimaryVideoProfile profile) {
+        if (profile == null) return null;
+        for (ResolutionAndFrameRate candidate : candidates) if (candidate != null && profile.sameSelection(profileOf(candidate))) return candidate;
+        return null;
+    }
+
+    /** Renders observed transport/decoder facts only; it never reads a camera profile as a fallback. */
+    private void renderPrimaryLiveFeed(@NonNull TextView target) {
+        DJICodecManager decoder = codecManager;
+        Integer width = decoder == null ? null : decoder.getVideoWidth();
+        Integer height = decoder == null ? null : decoder.getVideoHeight();
+        String dimensions = width != null && height != null && width > 0 && height > 0
+                ? width + " × " + height : "UNOBSERVED";
+        TransportRuntime runtime = TransportSessionManager.getInstance().getRuntime();
+        if (runtime == null) {
+            target.setText("DECODED DIMENSIONS — " + dimensions
+                    + "\nOBSERVED FPS — UNOBSERVED (transport inactive)"
+                    + "\nPRIMARY RTP EGRESS — UNOBSERVED (transport inactive)");
+            return;
+        }
+        com.dji.sdk.sample.transport.video.PrimaryLiveFeedMetrics.Snapshot cadence =
+                runtime.getPrimaryLiveFeedSnapshot();
+        TransportEgressMetrics.Snapshot egress = runtime.getEgressSnapshot();
+        String fps = cadence.observed ? String.format(Locale.US, "%.2f fps observed", cadence.framesPerSecond)
+                : "UNOBSERVED";
+        String bitrate = egress.primaryRtpRate.available
+                ? String.format(Locale.US, "%.2f Mb/s", egress.primaryRtpRate.bitsPerSecond / 1_000_000.0d)
+                : "UNOBSERVED";
+        target.setText("DECODED DIMENSIONS — " + dimensions + "\nOBSERVED FPS — " + fps
+                + "\nPRIMARY RTP EGRESS — " + bitrate + " · Android UDP socket accepted");
+    }
+
+    private static String resolutionDisplay(ResolutionAndFrameRate profile) {
+        return PrimaryVideoProfileLabels.resolution(profile.getResolution().name());
+    }
+
+    private static String frameRateDisplay(ResolutionAndFrameRate profile) {
+        return PrimaryVideoProfileLabels.frameRate(profile.getFrameRate().name());
     }
 
     private static void toggle(View panel) {
@@ -445,17 +939,22 @@ public final class OperateMvpView extends LinearLayout implements PresentableVie
 
     private void toggleDetail(@NonNull DetailGroup group) {
         if (detailPanel.getVisibility() == VISIBLE && expandedDetail == group) {
-            detailPanel.setVisibility(GONE);
-            expandedDetail = null;
+            hideDetailPanel();
             return;
         }
-        showDetail(group);
+        showDetail(group, true);
     }
 
-    private void showDetail(@NonNull DetailGroup group) {
+    /**
+     * Shows a status group. Only a top-rail chevron moves the sheet; tabs inside the sheet
+     * preserve its current location so Safety cannot accidentally fall back to Power's anchor.
+     */
+    private void showDetail(@NonNull DetailGroup group, boolean anchorToTopRail) {
+        if (anchorToTopRail) detailState.openFromTopRail(detailStateGroup(group));
+        else detailState.selectTab(detailStateGroup(group));
         expandedDetail = group;
         renderExpandedDetail();
-        positionDetailPanel(group);
+        if (anchorToTopRail) positionDetailPanel(group);
         operatorMenu.setVisibility(GONE);
         sourcePanel.setVisibility(GONE);
         detailPanel.setVisibility(VISIBLE);
@@ -482,8 +981,42 @@ public final class OperateMvpView extends LinearLayout implements PresentableVie
         boolean opening = panel.getVisibility() != VISIBLE;
         operatorMenu.setVisibility(GONE);
         sourcePanel.setVisibility(GONE);
-        detailPanel.setVisibility(GONE);
+        recordingPanel.setVisibility(GONE);
+        hideDetailPanel();
         if (opening) panel.setVisibility(VISIBLE);
+    }
+
+    private void toggleRecording() {
+        LocalPrimaryRecordingManager manager = LocalPrimaryRecordingManager.getInstance();
+        LocalPrimaryRecordingManager.Snapshot snapshot = manager.snapshot(getContext());
+        if (snapshot.state == RecordingState.ARMING || snapshot.state == RecordingState.RECORDING) {
+            manager.stop();
+            return;
+        }
+        if (manager.start(getContext())) TransportForegroundService.startForRecording(getContext());
+    }
+
+    private void renderRecordingSnapshot(@NonNull LocalPrimaryRecordingManager.Snapshot snapshot) {
+        if (!isAttachedToWindow()) return;
+        String stateText = snapshot.state == RecordingState.ARMING ? "ARMING RECORDING" : snapshot.state.name();
+        recordingState.setText(stateText);
+        recordingDetail.setText(snapshot.reason + " · " + snapshot.destination);
+        if (snapshot.state == RecordingState.RECORDING) {
+            long totalSeconds = snapshot.elapsedMillis() / 1000L;
+            recordingElapsed.setText(String.format(Locale.US, "%02d:%02d", totalSeconds / 60L, totalSeconds % 60L));
+            recordingAction.setText("STOP");
+        } else {
+            recordingElapsed.setText("");
+            recordingAction.setText(snapshot.state == RecordingState.ARMING ? "STOP" : "RECORD");
+        }
+        Button header = findViewById(R.id.operate_mvp_recording_button);
+        header.setText(snapshot.state == RecordingState.RECORDING ? "REC  ▾" : "RECORD  ▾");
+    }
+
+    private void hideDetailPanel() {
+        detailPanel.setVisibility(GONE);
+        expandedDetail = null;
+        detailState.close();
     }
 
     @Override public boolean dispatchTouchEvent(MotionEvent event) {
@@ -497,10 +1030,14 @@ public final class OperateMvpView extends LinearLayout implements PresentableVie
                     && !isTouchInside(event, findViewById(R.id.operate_mvp_sources_button))) {
                 sourcePanel.setVisibility(GONE);
             }
-            if (detailPanel.getVisibility() == VISIBLE && !isTouchInside(event, detailPanel)) {
-                detailPanel.setVisibility(GONE);
-                expandedDetail = null;
+            if (recordingPanel.getVisibility() == VISIBLE && !isTouchInside(event, recordingPanel)
+                    && !isTouchInside(event, findViewById(R.id.operate_mvp_recording_button))) {
+                recordingPanel.setVisibility(GONE);
             }
+            // Status panels contain operator controls (notably the Safety acknowledgements).
+            // Do not auto-close on an ambiguous touch: landscape/SurfaceView coordinate changes
+            // could otherwise hide the panel before its row receives the click. The same top-rail
+            // chevron that opened it remains the explicit close control.
         }
         return super.dispatchTouchEvent(event);
     }
@@ -531,6 +1068,9 @@ public final class OperateMvpView extends LinearLayout implements PresentableVie
         readinessSubscription = readinessStore.addListener(decision -> mainHandler.post(() -> {
             if (viewAttached) renderExpandedDetail();
         }));
+        recordingSubscription = LocalPrimaryRecordingManager.getInstance().addListener(
+                snapshot -> mainHandler.post(() -> renderRecordingSnapshot(snapshot)));
+        renderRecordingSnapshot(LocalPrimaryRecordingManager.getInstance().snapshot(getContext()));
         attachVideo();
         attachPassiveTelemetry();
         mainHandler.post(videoHealthCheck);
@@ -542,6 +1082,8 @@ public final class OperateMvpView extends LinearLayout implements PresentableVie
         detachPassiveTelemetry();
         if (readinessSubscription != null) readinessSubscription.close();
         readinessSubscription = null;
+        if (recordingSubscription != null) recordingSubscription.close();
+        recordingSubscription = null;
         mainHandler.removeCallbacks(videoHealthCheck);
         DJISampleApplication.getEventBus().post(new MainActivity.RequestEndFullScreenEvent());
         super.onDetachedFromWindow();
@@ -589,13 +1131,7 @@ public final class OperateMvpView extends LinearLayout implements PresentableVie
         hubSubscription = hub.addListener(new DjiDataHub.Listener() {
             @Override public void onVideo(@NonNull DjiDataHub.Feed feed, byte[] buffer, int size,
                     @NonNull String source) {
-                if (feed == DjiDataHub.Feed.PRIMARY) {
-                    DJICodecManager decoder = codecManager;
-                    if (decoder != null) decoder.sendDataToDecoder(buffer, size,
-                            UsbAccessoryService.VideoStreamSource.Camera.getIndex());
-                    lastVideoFrameElapsedMs = SystemClock.elapsedRealtime();
-                    postPrimarySignal();
-                } else {
+                if (feed == DjiDataHub.Feed.SECONDARY) {
                     DJICodecManager decoder = fpvCodecManager;
                     if (decoder != null) decoder.sendDataToDecoder(buffer, size,
                             UsbAccessoryService.VideoStreamSource.Fpv.getIndex());
@@ -622,6 +1158,20 @@ public final class OperateMvpView extends LinearLayout implements PresentableVie
                 scheduleTelemetryRender();
             }
         });
+        primaryVideoSubscription = hub.addPrimaryVideoListener(new DjiDataHub.PrimaryVideoListener() {
+            @Override public void onVideo(byte[] buffer, int size, @NonNull String source) {
+                DJICodecManager decoder = codecManager;
+                if (decoder != null) decoder.sendDataToDecoder(buffer, size,
+                        UsbAccessoryService.VideoStreamSource.Camera.getIndex());
+                lastVideoFrameElapsedMs = SystemClock.elapsedRealtime();
+                postPrimarySignal();
+            }
+
+            @Override public void onDiscontinuity() {
+                DJICodecManager decoder = codecManager;
+                if (decoder != null) decoder.resetKeyFrame();
+            }
+        });
         setSelectedSource(hub.getSource(DjiDataHub.Feed.PRIMARY));
         fpvSource.setText(hub.getSource(DjiDataHub.Feed.SECONDARY));
         secondaryFeedAvailable = hub.isAvailable(DjiDataHub.Feed.SECONDARY);
@@ -630,6 +1180,8 @@ public final class OperateMvpView extends LinearLayout implements PresentableVie
     private void detachHub() {
         if (hubSubscription != null) hubSubscription.close();
         hubSubscription = null;
+        if (primaryVideoSubscription != null) primaryVideoSubscription.close();
+        primaryVideoSubscription = null;
         primarySignalPostPending.set(false);
         telemetryRenderPosted.set(false);
         secondaryFeedAvailable = false;
@@ -803,10 +1355,17 @@ public final class OperateMvpView extends LinearLayout implements PresentableVie
         boolean connectionAttentionNeeded = aircraftConnected
                 && (!"CENDENCE OK".equals(controllerConnection)
                 || linkSeverity != OperateStatusModel.Severity.HEALTHY);
+        DjiHomeState djiHome = pendingStatusSnapshot == null ? null : pendingStatusSnapshot.djiHome;
+        OperateStatusModel.Severity homeSeverity = djiHome == null
+                ? OperateStatusModel.Severity.UNAVAILABLE
+                : djiHome.getAvailability() == DjiHomeState.Availability.WAITING_FOR_SAMPLE
+                ? OperateStatusModel.Severity.UNAVAILABLE
+                : OperateStatusModel.freshness(djiHome.getObservedElapsedMs(), now,
+                        djiHome.isAvailable());
         boolean positioningAttentionNeeded = aircraftConnected
                 && (rtkSeverity != OperateStatusModel.Severity.HEALTHY
                 || gpsSeverity != OperateStatusModel.Severity.HEALTHY
-                || flightState == null || !flightState.isHomeLocationSet());
+                || homeSeverity != OperateStatusModel.Severity.HEALTHY);
         boolean powerAttentionNeeded = aircraftConnected
                 && (OperateStatusModel.requiresAttention(rcSeverity)
                 || hasBatteryAttention(0, batteryOne, now) || hasBatteryAttention(1, batteryTwo, now));
@@ -816,13 +1375,6 @@ public final class OperateMvpView extends LinearLayout implements PresentableVie
                 rcSeverity == OperateStatusModel.Severity.CRITICAL
                         || batterySeverity(0, batteryOne, now) == OperateStatusModel.Severity.CRITICAL
                         || batterySeverity(1, batteryTwo, now) == OperateStatusModel.Severity.CRITICAL);
-        connectionDetail = String.format(Locale.US,
-                "Cendence remote controller\n%s\n\nAircraft\n%s\n\nDJI OcuSync link\n%s",
-                cendenceStatus.getText(), aircraftStatus.getText(), linkStatus.getText());
-        positioningDetail = String.format(Locale.US,
-                "RTK positioning\n%s\n\nGPS positioning\n%s\n\nHome point\n%s",
-                rtkStatus.getText(), gpsStatus.getText(), flightState != null && flightState.isHomeLocationSet()
-                        ? "SET" : "NOT SET OR NOT RECEIVED");
         powerDetail = String.format(Locale.US,
                 "Landing advisory (app only)\n%s\nThreshold %d%% · DJI protection unchanged\n\nCendence battery\n%s\n%s\n\nDrone battery 1 (DJI pack 0)\n%s\n\nDrone battery 2 (DJI pack 1)\n%s",
                 advisory.render(), lowBatteryPreferences.getThresholdPercent(),
@@ -905,40 +1457,165 @@ public final class OperateMvpView extends LinearLayout implements PresentableVie
                 : group == FlightReadinessModel.Group.NAVIGATION_HOME ? "NAVIGATION & HOME"
                 : group == FlightReadinessModel.Group.POWER ? "POWER"
                 : "SAFETY REVIEW";
-        StringBuilder body = new StringBuilder("STATUS — ").append(decision.getState().name())
-                .append('\n').append(decision.getExplanation());
+        String summary = group == FlightReadinessModel.Group.SAFETY_CONFIGURATION
+                ? safetySummary(decision)
+                : groupSummary(group, decision);
+        StringBuilder body = new StringBuilder(summary);
         for (FlightReadinessModel.Row row : decision.getRows()) {
             if (row.getGroup() != group) continue;
             body.append("\n\n").append(row.getLabel()).append("\n")
                     .append(row.getValue()).append(" · ").append(row.getState().name());
             if (row.getReason() != null) body.append("\n").append(row.getReason().getMessage());
         }
+        if (group == FlightReadinessModel.Group.AIRCRAFT_LINK) {
+            body.append("\n\nOcuSync downlink\n").append(ocuSyncDownlinkDetail());
+        }
+        if (group == FlightReadinessModel.Group.NAVIGATION_HOME) {
+            appendNavigationEvidence(body);
+        }
+        if (group == FlightReadinessModel.Group.POWER) {
+            body.append("\n\n").append(powerDetail);
+        }
         if (group == FlightReadinessModel.Group.SAFETY_CONFIGURATION) {
+            FlightControllerState flight = pendingFlightState;
+            body.append("\n\nMotors\n").append(flight == null ? "WAITING FOR FLIGHT STATE"
+                    : flight.areMotorsOn() ? "ON" : "OFF");
+            body.append("\n\nAircraft\n").append(flight == null ? "WAITING FOR FLIGHT STATE"
+                    : flight.isFlying() ? "FLYING" : "ON GROUND");
+            if (flight != null) {
+                body.append("\n\nFlight mode\n").append(String.valueOf(flight.getFlightMode()));
+                body.append("\n\nReturn to home\n").append(flight.isGoingHome()
+                        ? "ACTIVE" : "NOT ACTIVE");
+                body.append("\n\nLanding confirmation\n").append(flight.isLandingConfirmationNeeded()
+                        ? "REQUIRED — REVIEW LANDING AREA" : "NOT REQUIRED");
+            }
             body.append("\n\n").append(FlightReadinessStore.getInstance()
                     .getSafetyConfiguration().getSummary());
         }
         detailTitle.setText(title);
         detailBody.setText(body.toString());
+        renderDetailTabSelection();
         renderChecklist(group);
     }
 
+    @NonNull private String ocuSyncDownlinkDetail() {
+        OperateStatusModel.Severity freshness = OperateStatusModel.freshness(
+                lastOcuSyncElapsedMs, SystemClock.elapsedRealtime(), ocuSyncSupported);
+        if (!ocuSyncSupported) return "UNAVAILABLE";
+        if (pendingOcuSyncQuality < 0) return "WAITING FOR QUALITY SAMPLE";
+        if (freshness == OperateStatusModel.Severity.STALE) return "STALE";
+        if (freshness != OperateStatusModel.Severity.HEALTHY) return "UNAVAILABLE";
+        return String.format(Locale.US, "%d%%", pendingOcuSyncQuality);
+    }
+
+    /** Adds current positioning facts only while the hub-backed flight sample remains fresh. */
+    private void appendNavigationEvidence(@NonNull StringBuilder body) {
+        FlightControllerState flight = pendingFlightState;
+        OperateStatusModel.Severity freshness = OperateStatusModel.freshness(
+                lastFlightStateElapsedMs, SystemClock.elapsedRealtime(), flight != null);
+        if (freshness != OperateStatusModel.Severity.HEALTHY || flight == null) {
+            body.append("\n\nCurrent position\n").append(freshness == OperateStatusModel.Severity.STALE
+                    ? "STALE" : "WAITING FOR FLIGHT STATE");
+            body.append("\n\nHeading\n").append(freshness == OperateStatusModel.Severity.STALE
+                    ? "STALE" : "WAITING FOR FLIGHT STATE");
+            body.append("\n\nFlight mode\n").append(freshness == OperateStatusModel.Severity.STALE
+                    ? "STALE" : "WAITING FOR FLIGHT STATE");
+            return;
+        }
+        LocationCoordinate3D location = flight.getAircraftLocation();
+        body.append("\n\nCurrent position\n");
+        if (location == null || !finite(location.getLatitude()) || !finite(location.getLongitude())
+                || !finite(location.getAltitude())) {
+            body.append("UNAVAILABLE");
+        } else {
+            body.append(String.format(Locale.US, "%.6f, %.6f · %.1f m", location.getLatitude(),
+                    location.getLongitude(), location.getAltitude()));
+        }
+        body.append("\n\nHeading\n").append(String.format(Locale.US, "%d°",
+                flight.getAircraftHeadDirection()));
+        body.append("\n\nFlight mode\n").append(String.valueOf(flight.getFlightMode()));
+    }
+
+    private static boolean finite(double value) {
+        return !Double.isNaN(value) && !Double.isInfinite(value);
+    }
+
+    /** Makes the selected detail group visible without introducing a fourth top-rail chevron. */
+    private void renderDetailTabSelection() {
+        styleDetailTab(R.id.operate_mvp_readiness_connection, DetailGroup.CONNECTION);
+        styleDetailTab(R.id.operate_mvp_readiness_navigation, DetailGroup.POSITIONING);
+        styleDetailTab(R.id.operate_mvp_readiness_power, DetailGroup.POWER);
+        styleDetailTab(R.id.operate_mvp_readiness_safety, DetailGroup.SAFETY);
+    }
+
+    private void styleDetailTab(int id, @NonNull DetailGroup group) {
+        Button button = findViewById(id);
+        boolean selected = group == expandedDetail;
+        button.setTextColor(selected ? 0xFF36B95C : 0xFF162A36);
+        button.setAlpha(selected ? 1f : 0.68f);
+    }
+
+    @NonNull private static OperateStatusDetailState.Group detailStateGroup(@NonNull DetailGroup group) {
+        if (group == DetailGroup.CONNECTION) return OperateStatusDetailState.Group.LINK;
+        if (group == DetailGroup.POSITIONING) return OperateStatusDetailState.Group.NAV;
+        if (group == DetailGroup.POWER) return OperateStatusDetailState.Group.POWER;
+        return OperateStatusDetailState.Group.SAFETY;
+    }
+
+    @NonNull private static String groupSummary(@NonNull FlightReadinessModel.Group group,
+            @NonNull FlightReadinessModel.Decision decision) {
+        for (FlightReadinessModel.Row row : decision.getRows()) {
+            if (row.getGroup() == group && row.getState() != FlightReadinessModel.RowState.HEALTHY) {
+                return row.getLabel() + " — " + row.getValue();
+            }
+        }
+        return "LIVE";
+    }
+
+    @NonNull private static String safetySummary(@NonNull FlightReadinessModel.Decision decision) {
+        if (decision.getState() == FlightReadinessModel.State.MISSION_READY) {
+            return "APP CHECKS READY FOR MANUAL TAKEOFF\nUse Cendence/DJI warnings and physical inspection as final authority.";
+        }
+        if (decision.getState() == FlightReadinessModel.State.REVIEW_REQUIRED) return "REVIEW REQUIRED";
+        if (decision.getState() == FlightReadinessModel.State.BLOCKED) return "NOT READY — " + decision.getExplanation();
+        return "ATTENTION — " + decision.getExplanation();
+    }
+
     private void renderChecklist(@NonNull FlightReadinessModel.Group group) {
-        detailChecklist.removeAllViews();
-        if (group != FlightReadinessModel.Group.SAFETY_CONFIGURATION) return;
+        if (group != FlightReadinessModel.Group.SAFETY_CONFIGURATION) {
+            detailChecklist.setVisibility(GONE);
+            return;
+        }
+        detailChecklist.setVisibility(VISIBLE);
         FlightReadinessStore store = FlightReadinessStore.getInstance();
         java.util.Set<FlightReadinessSession.ChecklistItem> acknowledged =
                 store.getSession().getAcknowledgedItems();
         for (FlightReadinessSession.ChecklistItem item : FlightReadinessSession.ChecklistItem.values()) {
-            Button button = new Button(getContext());
+            Button button = safetyChecklistButtons.get(item);
+            if (button == null) {
+                button = new Button(getContext());
+                button.setTextSize(12f);
+                button.setGravity(Gravity.LEFT | Gravity.CENTER_VERTICAL);
+                button.setAllCaps(false);
+                button.setPadding(dp(14), 0, dp(14), 0);
+                button.setOnClickListener(view -> {
+                    store.toggleAcknowledgement(item);
+                    // Keep this same row alive: live status updates may arrive during the tap.
+                    renderChecklist(FlightReadinessModel.Group.SAFETY_CONFIGURATION);
+                });
+                LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                        LayoutParams.MATCH_PARENT, dp(52));
+                params.bottomMargin = dp(6);
+                detailChecklist.addView(button, params);
+                safetyChecklistButtons.put(item, button);
+            }
             boolean checked = acknowledged.contains(item);
-            button.setText((checked ? "✓  " : "□  ") + item.getLabel());
-            button.setTextSize(11f);
-            button.setGravity(Gravity.LEFT | Gravity.CENTER_VERTICAL);
-            button.setTextColor(checked ? 0xFF36B95C : 0xFF162A36);
-            button.setBackgroundResource(R.drawable.operate_mvp_button);
-            button.setOnClickListener(view -> store.acknowledge(item));
-            detailChecklist.addView(button, new LinearLayout.LayoutParams(
-                    LayoutParams.MATCH_PARENT, dp(38)));
+            button.setText((checked ? "✓  CONFIRMED — " : "○  ") + item.getLabel());
+            button.setTextColor(checked ? 0xFF187A38 : 0xFF162A36);
+            button.setBackgroundResource(checked ? R.drawable.operate_mvp_checklist_confirmed
+                    : R.drawable.operate_mvp_button);
+            button.setContentDescription((checked ? "Confirmed. Tap to undo: " : "Tap to confirm: ")
+                    + item.getLabel());
         }
     }
 

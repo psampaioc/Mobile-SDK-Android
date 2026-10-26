@@ -8,8 +8,12 @@ public final class FlightReadinessModelTest {
         reviewIsRequiredUntilPhysicalChecksAreComplete();
         automaticBlockersCannotBeAcknowledgedAway();
         batterySeverityChangesTheMissionDecision();
-        rtkIsAdvisoryUnlessTheMissionRequiresIt();
+        rtkIsAlwaysAdvisoryInTheApp();
         specificReasonsRemainVisible();
+        staleAndWaitingEvidenceRemainVisible();
+        homeEvidenceIsSharedAndNeverImplicitlyHealthy();
+        staleBatteryCannotProduceReadyAssessment();
+        staleCendenceBatteryIsNotReportedAsCritical();
         landingAdvisoryUsesConfiguredThresholdAndLowestPack();
         System.out.println("Flight readiness model tests passed");
     }
@@ -50,7 +54,7 @@ public final class FlightReadinessModelTest {
                 "critical battery reason");
     }
 
-    private static void rtkIsAdvisoryUnlessTheMissionRequiresIt() {
+    private static void rtkIsAlwaysAdvisoryInTheApp() {
         FlightReadinessModel.Input ordinary = healthyInput(true).withRtkFix(false);
         FlightReadinessModel.Decision ordinaryDecision = FlightReadinessModel.evaluate(ordinary);
         equal(FlightReadinessModel.State.ATTENTION, ordinaryDecision.getState(),
@@ -59,10 +63,9 @@ public final class FlightReadinessModelTest {
 
         FlightReadinessModel.Input rtkRequired = ordinary.withRtkRequired(true);
         FlightReadinessModel.Decision rtkDecision = FlightReadinessModel.evaluate(rtkRequired);
-        equal(FlightReadinessModel.State.BLOCKED, rtkDecision.getState(),
-                "RTK-required mission blocks without FIX");
-        equal(FlightReadinessModel.Reason.RTK_FIX_REQUIRED, rtkDecision.getPrimaryReason(),
-                "RTK reason");
+        equal(FlightReadinessModel.State.ATTENTION, rtkDecision.getState(),
+                "RTK preference remains advisory without FIX");
+        require(rtkDecision.canStartMission(), "RTK absence cannot add an app-side mission block");
     }
 
     private static void specificReasonsRemainVisible() {
@@ -72,6 +75,67 @@ public final class FlightReadinessModelTest {
         equal(FlightReadinessModel.Reason.FLIGHT_STATE_STALE, decision.getPrimaryReason(),
                 "stale reason");
         require(!decision.getRows().isEmpty(), "presentation rows describe the decision");
+    }
+
+    private static void staleAndWaitingEvidenceRemainVisible() {
+        FlightReadinessModel.Decision stale = FlightReadinessModel.evaluate(healthyInput(true)
+                .withFlightStateEvidence(FlightReadinessModel.EvidenceState.STALE));
+        equal(FlightReadinessModel.RowState.STALE, row(stale, "Flight state").getState(),
+                "stale flight evidence stays distinct from unavailable");
+        equal("STALE", row(stale, "Flight state").getValue(), "stale flight value");
+
+        FlightReadinessModel.Decision waiting = FlightReadinessModel.evaluate(healthyInput(true)
+                .withAircraftBatteryEvidence(0, FlightReadinessModel.EvidenceState.WAITING_FOR_SAMPLE));
+        equal(FlightReadinessModel.RowState.WAITING_FOR_SAMPLE,
+                row(waiting, "Drone battery B1").getState(), "battery waits for its first sample");
+        equal("WAITING FOR SAMPLE", row(waiting, "Drone battery B1").getValue(),
+                "battery waiting value");
+    }
+
+    private static void staleBatteryCannotProduceReadyAssessment() {
+        FlightReadinessModel.Decision decision = FlightReadinessModel.evaluate(healthyInput(true)
+                .withAircraftBatteryEvidence(1, FlightReadinessModel.EvidenceState.STALE));
+        equal(FlightReadinessModel.State.BLOCKED, decision.getState(),
+                "stale B2 cannot produce ready assessment");
+        equal(FlightReadinessModel.RowState.STALE, row(decision, "Drone battery B2").getState(),
+                "stale B2 stays visible as stale");
+    }
+
+    private static void staleCendenceBatteryIsNotReportedAsCritical() {
+        FlightReadinessModel.Decision decision = FlightReadinessModel.evaluate(healthyInput(true)
+                .withEvidence(FlightReadinessModel.EvidenceState.LIVE,
+                        FlightReadinessModel.EvidenceState.LIVE,
+                        FlightReadinessModel.EvidenceState.LIVE,
+                        FlightReadinessModel.EvidenceState.LIVE,
+                        FlightReadinessModel.EvidenceState.STALE,
+                        FlightReadinessModel.EvidenceState.LIVE,
+                        FlightReadinessModel.EvidenceState.LIVE));
+        equal(FlightReadinessModel.RowState.STALE, row(decision, "Cendence battery").getState(),
+                "stale Cendence charge remains visible as stale");
+        equal("Cendence battery status is stale or unavailable.",
+                decision.getPrimaryReason().getMessage(),
+                "missing Cendence charge is not presented as critical charge");
+    }
+
+    private static void homeEvidenceIsSharedAndNeverImplicitlyHealthy() {
+        FlightReadinessModel.Decision waiting = FlightReadinessModel.evaluate(healthyInput(true)
+                .withDjiHomeEvidence(FlightReadinessModel.EvidenceState.WAITING_FOR_SAMPLE));
+        equal(FlightReadinessModel.RowState.WAITING_FOR_SAMPLE, row(waiting, "DJI Home").getState(),
+                "mission opening must distinguish checking Home from absence");
+        equal(FlightReadinessModel.State.BLOCKED, waiting.getState(),
+                "checking DJI Home cannot pass mission readiness");
+
+        FlightReadinessModel.Decision stale = FlightReadinessModel.evaluate(healthyInput(true)
+                .withDjiHomeEvidence(FlightReadinessModel.EvidenceState.STALE));
+        equal(FlightReadinessModel.RowState.STALE, row(stale, "DJI Home").getState(),
+                "stale Home evidence remains visible to the operator");
+    }
+
+    private static FlightReadinessModel.Row row(FlightReadinessModel.Decision decision, String label) {
+        for (FlightReadinessModel.Row row : decision.getRows()) {
+            if (label.equals(row.getLabel())) return row;
+        }
+        throw new AssertionError("missing readiness row " + label);
     }
 
     private static void landingAdvisoryUsesConfiguredThresholdAndLowestPack() {

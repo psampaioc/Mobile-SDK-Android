@@ -6,6 +6,7 @@ import android.animation.ObjectAnimator;
 import android.app.SearchManager;
 import android.content.Context;
 import android.content.Intent;
+import android.net.Uri;
 import android.content.pm.ActivityInfo;
 import android.hardware.usb.UsbManager;
 import android.os.Bundle;
@@ -14,6 +15,7 @@ import android.view.MenuInflater;
 import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowManager;
 import android.widget.FrameLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
@@ -24,11 +26,14 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.SearchView;
 
 import com.dji.sdk.sample.R;
+import com.dji.sdk.sample.diagnostics.FlightAttemptDiagnosticLogger;
 import com.dji.sdk.sample.internal.model.ViewWrapper;
 import com.dji.sdk.sample.internal.utils.ToastUtils;
 import com.dji.sdk.sample.internal.view.DemoListView;
 import com.dji.sdk.sample.internal.view.PresentableView;
 import com.dji.sdk.sample.operate.OperateMvpView;
+import com.dji.sdk.sample.missionplanner.MissionFolderPreferences;
+import com.dji.sdk.sample.recording.RecordingFolderPreferences;
 import com.squareup.otto.Subscribe;
 
 import java.util.Stack;
@@ -37,6 +42,8 @@ import dji.sdk.base.BaseProduct;
 import dji.sdk.sdkmanager.DJISDKManager;
 
 public class MainActivity extends AppCompatActivity {
+    public static final int REQUEST_MISSION_FOLDER = 4821;
+    public static final int REQUEST_RECORDING_FOLDER = 4822;
 
     private static final String TAG = MainActivity.class.getSimpleName();
     private FrameLayout contentFrameLayout;
@@ -59,6 +66,9 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        // Start passive evidence before a Cendence/aircraft attach so the connection transition
+        // and the first motor-start attempt are retained for later USB extraction.
+        FlightAttemptDiagnosticLogger.start(getApplicationContext());
         DJISampleApplication.getEventBus().register(this);
         setContentView(R.layout.activity_main);
         setupActionBar();
@@ -75,10 +85,12 @@ public class MainActivity extends AppCompatActivity {
     @Override protected void onResume() {
         super.onResume();
         appInForeground = true;
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     }
 
     @Override protected void onPause() {
         appInForeground = false;
+        getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         super.onPause();
     }
 
@@ -136,6 +148,39 @@ public class MainActivity extends AppCompatActivity {
             attachedIntent.setAction(DJISDKManager.USB_ACCESSORY_ATTACHED);
             sendBroadcast(attachedIntent);
         }
+    }
+
+    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if ((requestCode != REQUEST_MISSION_FOLDER && requestCode != REQUEST_RECORDING_FOLDER)
+                || resultCode != RESULT_OK || data == null || data.getData() == null) return;
+        Uri tree = data.getData();
+        int flags = data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+        try {
+            getContentResolver().takePersistableUriPermission(tree, flags);
+            if (requestCode == REQUEST_MISSION_FOLDER) {
+                new MissionFolderPreferences(this).save(tree);
+                DJISampleApplication.getEventBus().post(new MissionFolderSelectedEvent(tree));
+            } else {
+                new RecordingFolderPreferences(this).save(tree);
+                DJISampleApplication.getEventBus().post(new RecordingFolderSelectedEvent(tree));
+            }
+        } catch (SecurityException ignored) { }
+    }
+
+    public void selectMissionFolder() {
+        selectFolder(REQUEST_MISSION_FOLDER);
+    }
+
+    public void selectRecordingFolder() {
+        selectFolder(REQUEST_RECORDING_FOLDER);
+    }
+
+    private void selectFolder(int requestCode) {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);
+        startActivityForResult(intent, requestCode);
     }
 
     @Override
@@ -332,6 +377,16 @@ public class MainActivity extends AppCompatActivity {
     }
 
     public static class ConnectivityChangeEvent {
+    }
+    public static class MissionFolderSelectedEvent {
+        private final Uri uri;
+        public MissionFolderSelectedEvent(Uri uri) { this.uri = uri; }
+        public Uri getUri() { return uri; }
+    }
+    public static class RecordingFolderSelectedEvent {
+        private final Uri uri;
+        public RecordingFolderSelectedEvent(Uri uri) { this.uri = uri; }
+        public Uri getUri() { return uri; }
     }
     //endregion
 }

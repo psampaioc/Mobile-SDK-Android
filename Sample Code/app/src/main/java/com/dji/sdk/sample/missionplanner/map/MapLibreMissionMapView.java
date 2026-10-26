@@ -52,8 +52,14 @@ public final class MapLibreMissionMapView extends FrameLayout {
     private MissionDraft pendingDraft;
     private Listener listener;
     private LatLng djiHome;
+    private LatLng pendingDjiHome;
     private LatLng aircraft;
+    private Marker djiHomeMarker;
+    private Marker pendingDjiHomeMarker;
+    private Marker aircraftMarker;
     private List<PlanningBoundary> planningBoundaries = new ArrayList<>();
+    private List<PlanningBoundary.Point> boundaryCapturePoints = new ArrayList<>();
+    private boolean destroyed;
 
     public MapLibreMissionMapView(@NonNull Context context) {
         super(context);
@@ -70,6 +76,7 @@ public final class MapLibreMissionMapView extends FrameLayout {
         mapView.onCreate(null);
         mapView.getMapAsync(new OnMapReadyCallback() {
             @Override public void onMapReady(@NonNull MapboxMap readyMap) {
+                if (destroyed) return;
                 map = readyMap;
                 map.addOnMapClickListener(point -> {
                     if (listener != null) listener.onMapTap(point.getLatitude(), point.getLongitude());
@@ -98,16 +105,28 @@ public final class MapLibreMissionMapView extends FrameLayout {
 
     public void setDjiHome(@Nullable Double latitude, @Nullable Double longitude) {
         djiHome = latitude == null || longitude == null ? null : new LatLng(latitude, longitude);
-        renderPending();
+        renderDynamicMarkers();
+    }
+
+    /** Shows a map-selected Home candidate until the operator confirms or cancels the DJI action. */
+    public void setPendingDjiHome(@Nullable Double latitude, @Nullable Double longitude) {
+        pendingDjiHome = latitude == null || longitude == null ? null : new LatLng(latitude, longitude);
+        renderDynamicMarkers();
     }
 
     public void setAircraft(@Nullable Double latitude, @Nullable Double longitude) {
         aircraft = latitude == null || longitude == null ? null : new LatLng(latitude, longitude);
-        renderPending();
+        renderDynamicMarkers();
     }
 
     public void setPlanningBoundaries(@Nullable List<PlanningBoundary> boundaries) {
         planningBoundaries = boundaries == null ? new ArrayList<>() : new ArrayList<>(boundaries);
+        renderPending();
+    }
+
+    /** Renders temporary local-boundary capture points; they are never DJI geometry. */
+    public void setBoundaryCapturePoints(@Nullable List<PlanningBoundary.Point> points) {
+        boundaryCapturePoints = points == null ? new ArrayList<>() : new ArrayList<>(points);
         renderPending();
     }
 
@@ -116,13 +135,20 @@ public final class MapLibreMissionMapView extends FrameLayout {
                 .target(new LatLng(latitude, longitude)).zoom(zoom).build());
     }
 
+    public void destroyMap() {
+        if (destroyed) return;
+        destroyed = true;
+        mapView.onDestroy();
+        map = null;
+    }
+
     @Override protected void onAttachedToWindow() {
         super.onAttachedToWindow();
-        mapView.onStart();
+        if (!destroyed) mapView.onStart();
     }
 
     @Override protected void onDetachedFromWindow() {
-        mapView.onStop();
+        if (!destroyed) mapView.onStop();
         super.onDetachedFromWindow();
     }
 
@@ -130,9 +156,15 @@ public final class MapLibreMissionMapView extends FrameLayout {
         if (map == null || pendingDraft == null || map.getStyle() == null) return;
         map.clear();
         waypointMarkers.clear();
-        if (djiHome != null) map.addMarker(new MarkerOptions().position(djiHome).title("DJI HOME"));
-        if (aircraft != null) map.addMarker(new MarkerOptions().position(aircraft).title("AIRCRAFT"));
+        djiHomeMarker = null;
+        pendingDjiHomeMarker = null;
+        aircraftMarker = null;
         renderPlanningBoundaries();
+        int captureNumber = 1;
+        for (PlanningBoundary.Point point : boundaryCapturePoints) {
+            map.addMarker(new MarkerOptions().position(new LatLng(point.getLatitude(), point.getLongitude()))
+                    .title("BOUNDARY " + captureNumber++));
+        }
         List<LatLng> route = new ArrayList<>();
         int number = 1;
         for (MissionWaypoint waypoint : pendingDraft.getWaypoints()) {
@@ -145,6 +177,25 @@ public final class MapLibreMissionMapView extends FrameLayout {
         }
         if (route.size() > 1) map.addPolyline(new PolylineOptions().addAll(route)
                 .color(0xFF2A9D4B).width(4f));
+        renderDynamicMarkers();
+    }
+
+    /**
+     * Flight status is refreshed frequently. Dynamic status markers must be updated independently
+     * from route geometry, otherwise map.clear() replaces waypoint markers while the operator is
+     * trying to tap one.
+     */
+    private void renderDynamicMarkers() {
+        if (map == null || map.getStyle() == null) return;
+        if (djiHomeMarker != null) map.removeMarker(djiHomeMarker);
+        if (pendingDjiHomeMarker != null) map.removeMarker(pendingDjiHomeMarker);
+        if (aircraftMarker != null) map.removeMarker(aircraftMarker);
+        djiHomeMarker = djiHome == null ? null
+                : map.addMarker(new MarkerOptions().position(djiHome).title("DJI HOME"));
+        pendingDjiHomeMarker = pendingDjiHome == null ? null
+                : map.addMarker(new MarkerOptions().position(pendingDjiHome).title("PENDING DJI HOME"));
+        aircraftMarker = aircraft == null ? null
+                : map.addMarker(new MarkerOptions().position(aircraft).title("AIRCRAFT"));
     }
 
     private void renderPlanningBoundaries() {

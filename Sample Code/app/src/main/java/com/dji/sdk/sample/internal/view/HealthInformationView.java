@@ -9,6 +9,8 @@ import android.widget.TextView;
 
 import com.dji.sdk.sample.R;
 import com.dji.sdk.sample.internal.utils.Helper;
+import com.dji.sdk.sample.djihub.CallbackMulticaster;
+import com.dji.sdk.sample.djihub.DjiDataHub;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -19,11 +21,12 @@ import dji.common.product.Model;
 import dji.sdk.base.DJIDiagnostics;
 import dji.sdk.sdkmanager.DJISDKManager;
 
-public class HealthInformationView extends FrameLayout implements View.OnClickListener, PresentableView, DJIDiagnostics.DiagnosticsInformationCallback {
+public class HealthInformationView extends FrameLayout implements View.OnClickListener, PresentableView {
     private static final String TAG = HealthInformationView.class.getSimpleName();
     private TextView logTv;
     private TextView otherLogTv;
     private boolean isSupportHMS;
+    private CallbackMulticaster.Subscription diagnosticsSubscription;
 
     public HealthInformationView(@NonNull Context context) {
         super(context);
@@ -67,7 +70,6 @@ public class HealthInformationView extends FrameLayout implements View.OnClickLi
         return this.getClass().getSimpleName() + ".java";
     }
 
-    @Override
     // the list contains all "type == DJIDiagnostics.DJIDiagnosticsType.DEVICE_HEALTH_INFORMATION" element at real time.
     public void onUpdate(List<DJIDiagnostics> list) {
         if (list == null || list.isEmpty()) {
@@ -137,17 +139,18 @@ public class HealthInformationView extends FrameLayout implements View.OnClickLi
     @Override
     protected void onAttachedToWindow() {
         super.onAttachedToWindow();
-        if (DJISDKManager.getInstance().getProduct() != null) {
-            DJISDKManager.getInstance().getProduct().setDiagnosticsInformationCallback(this);
-        }
+        diagnosticsSubscription = DjiDataHub.getInstance().addListener(new DjiDataHub.Listener() {
+            @Override public void onDiagnostics(@NonNull List<DJIDiagnostics> diagnostics) {
+                onUpdate(diagnostics);
+            }
+        });
     }
 
     @Override
     protected void onDetachedFromWindow() {
+        if (diagnosticsSubscription != null) diagnosticsSubscription.close();
+        diagnosticsSubscription = null;
         super.onDetachedFromWindow();
-        if (DJISDKManager.getInstance().getProduct() != null) {
-            DJISDKManager.getInstance().getProduct().setDiagnosticsInformationCallback(null);
-        }
     }
 
     public static class HealthInfo {

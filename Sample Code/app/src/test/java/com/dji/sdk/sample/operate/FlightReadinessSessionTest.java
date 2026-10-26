@@ -6,8 +6,20 @@ public final class FlightReadinessSessionTest {
 
     public static void main(String[] args) {
         acknowledgementsSurvivePanelReopenButNotAircraftReconnect();
+        acknowledgementCanBeUndoneBeforeMissionStart();
         eventHistoryIsBounded();
         System.out.println("Flight readiness session tests passed");
+    }
+
+    private static void acknowledgementCanBeUndoneBeforeMissionStart() {
+        FlightReadinessSession session = new FlightReadinessSession(8);
+        FlightReadinessSession.ChecklistItem item = FlightReadinessSession.ChecklistItem.LANDING_AREA;
+        session.acknowledge(item, 10L);
+        require(session.getAcknowledgedItems().contains(item), "item confirmed");
+        session.unacknowledge(item, 20L);
+        require(!session.getAcknowledgedItems().contains(item), "item can be undone");
+        require("unacknowledged".equals(session.getRecentEvents().get(1).getType()),
+                "undo is recorded for diagnosis");
     }
 
     private static void acknowledgementsSurvivePanelReopenButNotAircraftReconnect() {

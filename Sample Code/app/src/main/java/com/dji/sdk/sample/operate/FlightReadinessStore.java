@@ -6,6 +6,7 @@ import androidx.annotation.NonNull;
 
 import com.dji.sdk.sample.djihub.CallbackMulticaster;
 import com.dji.sdk.sample.djihub.DjiDataHub;
+import com.dji.sdk.sample.djihub.DjiHomeState;
 
 import dji.common.battery.BatteryState;
 import dji.common.flightcontroller.FlightControllerState;
@@ -78,6 +79,15 @@ public final class FlightReadinessStore {
         publish();
     }
 
+    /** Toggles only an operator acknowledgement; it never changes DJI flight-controller state. */
+    public void toggleAcknowledgement(@NonNull FlightReadinessSession.ChecklistItem item) {
+        long now = SystemClock.elapsedRealtime();
+        if (session.getAcknowledgedItems().contains(item)) session.unacknowledge(item, now);
+        else session.acknowledge(item, now);
+        publishLatestEvent();
+        publish();
+    }
+
     @NonNull public CallbackMulticaster.Subscription addAuditListener(@NonNull AuditListener listener) {
         return auditListeners.add(listener);
     }
@@ -97,32 +107,50 @@ public final class FlightReadinessStore {
                 false, false, false, false, false, false, false, false, false, rtkRequired,
                 false, -1, -1, -1, session.isComplete()));
         FlightControllerState flight = snapshot.flightState;
+        DjiHomeState djiHome = snapshot.djiHome;
         RTKState rtk = snapshot.rtkState;
         BatteryState b1 = snapshot.aircraftBatteryStates.get(0);
         BatteryState b2 = snapshot.aircraftBatteryStates.get(1);
         int rcPercent = snapshot.remoteControllerBattery == null ? -1
                 : snapshot.remoteControllerBattery.getRemainingChargeInPercent();
-        return FlightReadinessModel.evaluate(new FlightReadinessModel.Input(
+        int b1Percent = b1 == null ? -1 : b1.getChargeRemainingInPercent();
+        int b2Percent = b2 == null ? -1 : b2.getChargeRemainingInPercent();
+        FlightReadinessModel.Input input = new FlightReadinessModel.Input(
                 snapshot.aircraftConnected,
                 snapshot.remoteControllerConnected,
-                fresh(snapshot.ocuSyncElapsedMs, nowMs, snapshot.ocuSyncAvailable),
-                fresh(snapshot.flightStateElapsedMs, nowMs, flight != null),
-                flight != null && flight.isHomeLocationSet(),
+                // Link capability and downlink-quality samples are distinct. The latter is
+                // presentation evidence; absence must not invent a disconnected OcuSync link.
+                snapshot.ocuSyncAvailable,
+                flight != null,
+                djiHome != null && djiHome.isAvailable(),
                 flight != null && flight.isGoingHome(),
-                fresh(snapshot.flightStateElapsedMs, nowMs, flight != null),
-                fresh(snapshot.rtkStateElapsedMs, nowMs, rtk != null),
+                flight != null,
+                rtk != null,
                 rtk != null && String.valueOf(rtk.getPositioningSolution()).contains("FIX"),
                 rtkRequired,
                 safetyConfiguration.getReadbackState() == FlightSafetyConfiguration.ReadbackState.AVAILABLE,
-                rcPercent,
-                b1 == null ? -1 : b1.getChargeRemainingInPercent(),
-                b2 == null ? -1 : b2.getChargeRemainingInPercent(),
-                session.isComplete()));
+                rcPercent, b1Percent, b2Percent, session.isComplete());
+        return FlightReadinessModel.evaluate(input.withEvidence(
+                snapshot.ocuSyncAvailable ? FlightReadinessModel.EvidenceState.LIVE
+                        : FlightReadinessModel.EvidenceState.UNAVAILABLE,
+                OperateStatusModel.evidence(snapshot.flightStateElapsedMs, nowMs, flight != null),
+                OperateStatusModel.evidence(snapshot.flightStateElapsedMs, nowMs, flight != null),
+                OperateStatusModel.evidence(snapshot.rtkStateElapsedMs, nowMs, rtk != null),
+                OperateStatusModel.evidence(snapshot.remoteControllerBatteryElapsedMs, nowMs,
+                        snapshot.remoteControllerBattery != null),
+                OperateStatusModel.evidence(snapshot.aircraftBatteryElapsedMs.containsKey(0)
+                        ? snapshot.aircraftBatteryElapsedMs.get(0) : -1L, nowMs, b1 != null),
+                OperateStatusModel.evidence(snapshot.aircraftBatteryElapsedMs.containsKey(1)
+                        ? snapshot.aircraftBatteryElapsedMs.get(1) : -1L, nowMs, b2 != null))
+                .withDjiHomeEvidence(homeEvidence(djiHome, nowMs)));
     }
 
-    private static boolean fresh(long receivedAtMs, long nowMs, boolean supported) {
-        return OperateStatusModel.freshness(receivedAtMs, nowMs, supported)
-                == OperateStatusModel.Severity.HEALTHY;
+    private static FlightReadinessModel.EvidenceState homeEvidence(DjiHomeState home, long nowMs) {
+        if (home == null || home.getAvailability() == DjiHomeState.Availability.WAITING_FOR_SAMPLE) {
+            return FlightReadinessModel.EvidenceState.WAITING_FOR_SAMPLE;
+        }
+        if (!home.isAvailable()) return FlightReadinessModel.EvidenceState.UNAVAILABLE;
+        return OperateStatusModel.evidence(home.getObservedElapsedMs(), nowMs, true);
     }
 
     private void publish() {

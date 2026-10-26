@@ -9,7 +9,6 @@ import android.view.LayoutInflater;
 import android.view.TextureView;
 import android.widget.FrameLayout;
 import com.dji.sdk.sample.R;
-import com.dji.sdk.sample.djihub.CallbackMulticaster;
 import com.dji.sdk.sample.djihub.DjiDataHub;
 import dji.sdk.codec.DJICodecManager;
 
@@ -18,7 +17,7 @@ import dji.sdk.codec.DJICodecManager;
  */
 public class BaseCameraView extends FrameLayout implements TextureView.SurfaceTextureListener {
 
-    private CallbackMulticaster.Subscription hubSubscription;
+    private DjiDataHub.PrimaryVideoSubscription hubSubscription;
     private DJICodecManager codecManager = null;
 
     public BaseCameraView(Context context, AttributeSet attrs) {
@@ -45,12 +44,14 @@ public class BaseCameraView extends FrameLayout implements TextureView.SurfaceTe
     @Override protected void onAttachedToWindow() {
         super.onAttachedToWindow();
         if (hubSubscription != null) return;
-        hubSubscription = DjiDataHub.getInstance().addListener(new DjiDataHub.Listener() {
-            @Override public void onVideo(DjiDataHub.Feed feed, byte[] bytes, int size,
-                    String source) {
-                if (feed == DjiDataHub.Feed.PRIMARY && codecManager != null) {
-                    codecManager.sendDataToDecoder(bytes, size);
-                }
+        hubSubscription = DjiDataHub.getInstance().addPrimaryVideoListener(
+                new DjiDataHub.PrimaryVideoListener() {
+            @Override public void onVideo(byte[] bytes, int size, String source) {
+                if (codecManager != null) codecManager.sendDataToDecoder(bytes, size);
+            }
+
+            @Override public void onDiscontinuity() {
+                if (codecManager != null) codecManager.resetKeyFrame();
             }
         });
     }

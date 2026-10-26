@@ -110,17 +110,11 @@ public class VirtualStickView extends RelativeLayout implements View.OnClickList
     }
 
     private void initParams() {
-        // We recommand you use the below settings, a standard american hand style.
         if (flightController == null) {
             if (ModuleVerificationUtil.isFlightControllerAvailable()) {
                 flightController = DJISampleApplication.getAircraftInstance().getFlightController();
             }
         }
-        flightController.setVerticalControlMode(VerticalControlMode.VELOCITY);
-        flightController.setRollPitchControlMode(RollPitchControlMode.VELOCITY);
-        flightController.setYawControlMode(YawControlMode.ANGULAR_VELOCITY);
-        flightController.setRollPitchCoordinateSystem(FlightCoordinateSystem.BODY);
-
         // Check if the simulator is activated.
         if (simulator == null) {
             simulator = ModuleVerificationUtil.getSimulator();
@@ -254,7 +248,9 @@ public class VirtualStickView extends RelativeLayout implements View.OnClickList
                 flightController.setVirtualStickModeEnabled(true, new CommonCallbacks.CompletionCallback() {
                     @Override
                     public void onResult(DJIError djiError) {
-                        flightController.setVirtualStickAdvancedModeEnabled(true);
+                        if (djiError == null) {
+                            flightController.setVirtualStickAdvancedModeEnabled(true);
+                        }
                         DialogUtils.showDialogBasedOnError(getContext(), djiError);
                     }
                 });

@@ -13,6 +13,12 @@ public final class MissionPlannerUnitTestSuite {
         resolvesWaypointAltitudeOverrides();
         rejectsInvalidCoordinatesAndSpeed();
         preservesExplicitFinishAction();
+        appliesNewMissionDefaultsOnlyAtDraftCreation();
+        MissionDefaultsPreferencesTest.run();
+        preservesHeadingInDraftContract();
+        keepsWaypointEntryEnabledUntilExplicitlyStopped();
+        homeSelectionIsIndependentFromRouteEntry();
+        boundaryCaptureCanBeCancelledWithoutRestoringWaypointMode();
         editsOrderedRouteWithoutChangingDefaults();
         reordersSelectedWaypointWithoutChangingIt();
         distinguishesLocalAndRemoteMissionEvidence();
@@ -55,6 +61,68 @@ public final class MissionPlannerUnitTestSuite {
         MissionDraft draft = new MissionDraft("Land", 30f, 3f, MissionFinishAction.LAND_AT_FINAL,
                 Arrays.asList(new MissionWaypoint(38.7, -9.1, 10f), new MissionWaypoint(38.71, -9.11, 0f)), null, null);
         require(draft.getFinishAction() == MissionFinishAction.LAND_AT_FINAL, "finish action must not be inferred");
+    }
+
+    private static void appliesNewMissionDefaultsOnlyAtDraftCreation() {
+        MissionDefaults defaults = new MissionDefaults(40f, 5f, MissionHeadingMode.REMOTE_CONTROLLER,
+                MissionFinishAction.RETURN_AND_LAND_DJI_HOME);
+        MissionDraft created = defaults.newDraft();
+        require(created.getWaypoints().isEmpty(), "new defaults must create an empty route");
+        require(created.getDefaultAltitudeMeters() == 40f && created.getBaseSpeedMetersPerSecond() == 5f,
+                "new defaults must populate altitude and speed");
+        require(created.getHeadingMode() == MissionHeadingMode.REMOTE_CONTROLLER
+                        && created.getFinishAction() == MissionFinishAction.RETURN_AND_LAND_DJI_HOME,
+                "new defaults must populate heading and finish action");
+        MissionDraft existing = new MissionDraft("Existing", 30f, 3f, MissionFinishAction.HOVER_AT_FINAL,
+                MissionHeadingMode.AUTO, Arrays.asList(new MissionWaypoint(38.7, -9.1, null),
+                new MissionWaypoint(38.71, -9.11, null)), null, null);
+        require(existing.getHeadingMode() == MissionHeadingMode.AUTO && existing.getDefaultAltitudeMeters() == 30f,
+                "defaults must not mutate an existing draft");
+    }
+
+    private static void preservesHeadingInDraftContract() {
+        MissionDraft selected = new MissionDraft("Heading", 30f, 3f, MissionFinishAction.HOVER_AT_FINAL,
+                MissionHeadingMode.REMOTE_CONTROLLER, Arrays.asList(new MissionWaypoint(38.7, -9.1, null),
+                new MissionWaypoint(38.71, -9.11, null)), null, null);
+        require(selected.getHeadingMode() == MissionHeadingMode.REMOTE_CONTROLLER,
+                "selected heading must remain visible in the immutable draft");
+        require(selected.withWaypoints(selected.getWaypoints()).getHeadingMode() == MissionHeadingMode.REMOTE_CONTROLLER,
+                "route edits must retain selected heading");
+    }
+
+    private static void keepsWaypointEntryEnabledUntilExplicitlyStopped() {
+        MissionMapInteractionState state = new MissionMapInteractionState();
+        require(state.toggleAddWaypoints(), "first tap enables batch waypoint entry");
+        require(state.getMode() == MissionMapInteractionState.Mode.ADD_WAYPOINTS,
+                "adding remains enabled after a map tap is handled by the view");
+        require(!state.toggleAddWaypoints(), "second tap explicitly stops waypoint entry");
+        state.beginBoundaryCapture();
+        require(state.getMode() == MissionMapInteractionState.Mode.CAPTURE_BOUNDARY_POINTS,
+                "boundary capture excludes waypoint entry");
+        state.clear();
+        require(state.getMode() == MissionMapInteractionState.Mode.IDLE,
+                "leaving Mission clears local map editing");
+    }
+
+    private static void homeSelectionIsIndependentFromRouteEntry() {
+        MissionMapInteractionState state = new MissionMapInteractionState();
+        state.toggleAddWaypoints();
+        require(state.toggleSelectDjiHome(), "Home selection must be explicitly enabled");
+        require(state.getMode() == MissionMapInteractionState.Mode.SELECT_DJI_HOME,
+                "Home selection replaces route entry instead of appending a waypoint");
+        require(!state.toggleSelectDjiHome(), "second tap cancels Home selection");
+        require(state.getMode() == MissionMapInteractionState.Mode.IDLE,
+                "cancelling Home selection returns to neutral mode");
+    }
+
+    private static void boundaryCaptureCanBeCancelledWithoutRestoringWaypointMode() {
+        MissionMapInteractionState state = new MissionMapInteractionState();
+        state.toggleAddWaypoints();
+        state.beginBoundaryCapture();
+        require(state.isBoundaryCapture(), "boundary capture must be explicit");
+        state.cancelBoundaryCapture();
+        require(state.getMode() == MissionMapInteractionState.Mode.IDLE,
+                "cancelling capture must not reactivate waypoint entry");
     }
 
     private static void editsOrderedRouteWithoutChangingDefaults() {

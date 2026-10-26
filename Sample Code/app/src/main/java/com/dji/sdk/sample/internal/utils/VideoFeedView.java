@@ -31,6 +31,7 @@ public class VideoFeedView extends SurfaceView {
     private DJICodecManager codecManager = null;
     private VideoFeeder.VideoDataListener videoDataListener = null;
     private CallbackMulticaster.Subscription hubSubscription;
+    private DjiDataHub.PrimaryVideoSubscription primaryVideoSubscription;
     private DjiDataHub.Feed hubFeed = DjiDataHub.Feed.PRIMARY;
     private SourceListener sourceListener;
     private int videoWidth;
@@ -131,8 +132,10 @@ public class VideoFeedView extends SurfaceView {
     }
 
     public VideoFeeder.VideoDataListener registerLiveVideo(VideoFeeder.VideoFeed videoFeed, boolean isPrimary) {
+        DjiDataHub.Feed requestedFeed = isPrimary ? DjiDataHub.Feed.PRIMARY : DjiDataHub.Feed.SECONDARY;
+        if (hubFeed != requestedFeed && hubSubscription != null) detachHub();
         isPrimaryVideoFeed = isPrimary;
-        hubFeed = isPrimary ? DjiDataHub.Feed.PRIMARY : DjiDataHub.Feed.SECONDARY;
+        hubFeed = requestedFeed;
         attachHub();
         // Kept for source compatibility. Video delivery is now exclusively owned by DjiDataHub.
         return null;
@@ -144,7 +147,7 @@ public class VideoFeedView extends SurfaceView {
         hubSubscription = hub.addListener(new DjiDataHub.Listener() {
             @Override public void onVideo(@NonNull DjiDataHub.Feed feed, byte[] videoBuffer,
                     int size, @NonNull String source) {
-                if (feed != hubFeed) return;
+                if (hubFeed != DjiDataHub.Feed.SECONDARY || feed != hubFeed) return;
                 lastReceivedFrameTime.set(System.currentTimeMillis());
                 DJICodecManager decoder = codecManager;
                 if (decoder != null) decoder.sendDataToDecoder(videoBuffer, size,
@@ -159,7 +162,28 @@ public class VideoFeedView extends SurfaceView {
                 }
             }
         });
+        if (hubFeed == DjiDataHub.Feed.PRIMARY) {
+            primaryVideoSubscription = hub.addPrimaryVideoListener(
+                    new DjiDataHub.PrimaryVideoListener() {
+                @Override public void onVideo(byte[] videoBuffer, int size, String source) {
+                    lastReceivedFrameTime.set(System.currentTimeMillis());
+                    DJICodecManager decoder = codecManager;
+                    if (decoder != null) decoder.sendDataToDecoder(videoBuffer, size,
+                            UsbAccessoryService.VideoStreamSource.Camera.getIndex());
+                }
+                @Override public void onDiscontinuity() {
+                    if (codecManager != null) codecManager.resetKeyFrame();
+                }
+            });
+        }
         if (sourceListener != null) sourceListener.onSourceChanged(hub.getSource(hubFeed));
+    }
+
+    private void detachHub() {
+        if (hubSubscription != null) hubSubscription.close();
+        hubSubscription = null;
+        if (primaryVideoSubscription != null) primaryVideoSubscription.close();
+        primaryVideoSubscription = null;
     }
 
     public void changeSourceResetKeyFrame() {
@@ -176,8 +200,7 @@ public class VideoFeedView extends SurfaceView {
 
     @Override
     protected void onDetachedFromWindow() {
-        if (hubSubscription != null) hubSubscription.close();
-        hubSubscription = null;
+        detachHub();
         super.onDetachedFromWindow();
         if (subscription != null && !subscription.isUnsubscribed()) {
             subscription.unsubscribe();

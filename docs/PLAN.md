@@ -1,5 +1,11 @@
 # Current plan
 
+## Current priority
+
+Before any further Android-to-Edge transport optimization or architectural change, use [Primary RTP Gap Delivery - Plan](plans/2026-09-23-2000-fix-primary-rtp-gap-delivery-plan.md).
+
+It is the active two-day delivery plan for the intermittent complete transport pause. It retains [Android Edge Transport Pause Diagnosis - Plan](plans/2026-09-15-android-edge-pause-diagnosis-plan.md) as the diagnostic baseline, adds transport-scoped Wi-Fi retention and RTP-window evidence, and gates any TCP comparison on a correlated tablet/Edge capture.
+
 ## Objective
 
 Provide one reliable Android operator application for the M210 RTK V2: passive situational awareness and video, operator-controlled waypoint missions, and low-latency telemetry/video forwarding to an Ubuntu ROS 2 edge system.
@@ -33,7 +39,7 @@ Provide one reliable Android operator application for the M210 RTK V2: passive s
 
 - A selected Edge endpoint is persistent transport intent: once marked `IN USE`, passive transport starts automatically with a connected aircraft and remains independent of Operate/Mission/Transport view lifecycles. Removing or replacing the endpoint is the only normal UI lifecycle change.
 - Selecting `IN USE` also starts a persistent Android foreground service. Video, telemetry, health, AU metadata and clock replies therefore continue when the operator accidentally visits the tablet Home screen or backgrounds the Activity. This service owns no DJI callback; it only maintains the existing `DjiDataHub`/transport fan-out. Explicit force-stop, uninstall, device shutdown, or endpoint removal still end the session normally.
-- UDP 5500 is limited to Flight fallback pose, RTK fusion/use state, gimbal pitch, and a 1 Hz health record. RTP/ports remain Primary 5600 and FPV 5610; UDP 5501 carries only access-unit timing metadata and UDP 5502 answers Edge clock pings at the sender origin.
+- UDP 5500 is limited to Flight fallback pose, RTK fusion/use state, gimbal pitch, and a 1 Hz health record. RTP is Primary-only on 5600; UDP 5501 carries only Primary access-unit timing metadata and UDP 5502 answers Edge clock pings at the sender origin. Health contains compact session totals for accepted Primary RTP packets/bytes, accepted telemetry and metadata datagrams/bytes, and accepted clock pongs so the Edge can compare sender-side socket acceptance against receipt.
 - Each Android transport session writes bounded local NDJSON under its own UUID directory. Secondary framing/source/parser evidence stays local; it is not included in network health.
 - Local proof on 2026-09-03: callback ownership check, transport/parser/JSON tests, debug build, and APK verification passed. Primary transport was physically proven on a previous Ubuntu bench. Secondary/FPV callback reception is proven, but its access-unit/RTP/Edge-image result remains a required hardware test.
 
@@ -450,6 +456,7 @@ what remains read-only, and what still needs hardware evidence.
 4. **Status accuracy:** characterize OcuSync quality on the exact Cendence firmware and RTK/GPS quality/fix behavior; keep unsupported/missing values explicit.
 5. **Edge integration:** coordinate the direct ROS 2 Humble receiver transition in `edge-matrice-transport`; keep Android transport protocol stable until jointly changed and tested.
 6. **Backlog progression:** work GitHub issues in the agreed priority order: #2, #1, #5, #3, #4, #7, #6, #11, #10, #8, #9. Do not close an issue based only on a successful build when it has a hardware acceptance gate.
+7. **Primary video truth validation:** verify that Settings labels the fixed-left Zenmuse recording profile separately from decoder-derived live dimensions, access-unit-derived FPS, and Android-local RTP egress. Compare those values with Edge ingress in one timed M210/Cendence session; a recording profile does not promise a live-feed change.
 
 ## Acceptance checks
 

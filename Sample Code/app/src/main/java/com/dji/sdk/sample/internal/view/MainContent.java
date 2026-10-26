@@ -35,6 +35,7 @@ import com.dji.sdk.sample.internal.utils.GeneralUtils;
 import com.dji.sdk.sample.internal.utils.ToastUtils;
 import com.dji.sdk.sample.operate.OperateMvpView;
 import com.dji.sdk.sample.djihub.DjiDataHub;
+import com.dji.sdk.sample.diagnostics.FlightAttemptDiagnosticLogger;
 import com.dji.sdk.sample.transport.TransportSessionManager;
 import com.dji.sdk.sample.transport.TransportForegroundService;
 import com.squareup.otto.Subscribe;
@@ -95,6 +96,7 @@ public class MainContent extends RelativeLayout {
     private Button mBtnRegisterApp;
     private Button getmBtnRegisterAppForLDM;
     private Button mBtnOpen;
+    private Button mBtnTest;
     private Button mBtnBluetooth;
     private ViewWrapper operateView =
             new ViewWrapper(new OperateMvpView(getContext()), R.string.operate_menu_operate);
@@ -175,6 +177,7 @@ public class MainContent extends RelativeLayout {
         mBtnRegisterApp = (Button) findViewById(R.id.btn_registerApp);
         getmBtnRegisterAppForLDM = (Button) findViewById(R.id.btn_registerAppForLDM);
         mBtnOpen = (Button) findViewById(R.id.btn_open);
+        mBtnTest = (Button) findViewById(R.id.btn_test);
         mBridgeModeEditText = (EditText) findViewById(R.id.edittext_bridge_ip);
         mBtnBluetooth = (Button) findViewById(R.id.btn_bluetooth);
         mCheckboxFirmware = (CheckBox) findViewById(R.id.checkbox_firmware);
@@ -202,6 +205,16 @@ public class MainContent extends RelativeLayout {
                 if (GeneralUtils.isFastDoubleClick()) {
                     return;
                 }
+                DJISampleApplication.getEventBus().post(operateView);
+            }
+        });
+        // UI-only entry for bench review with no DJI product. This only presents the same
+        // Operate shell; it does not register the SDK, start a product connection, or issue a
+        // flight/mission/gimbal command.
+        mBtnTest.setOnClickListener(new OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (GeneralUtils.isFastDoubleClick()) return;
                 DJISampleApplication.getEventBus().post(operateView);
             }
         });
@@ -724,6 +737,7 @@ public class MainContent extends RelativeLayout {
 
     /** MainContent receives DJI product/component lifecycle events and keeps hub bindings current. */
     private void reconcileDjiDataHub(BaseProduct product) {
+        FlightAttemptDiagnosticLogger.start(getContext());
         DjiDataHub hub = DjiDataHub.getInstance();
         if (product instanceof Aircraft && product.isConnected()) {
             Aircraft aircraft = (Aircraft) product;
@@ -737,6 +751,7 @@ public class MainContent extends RelativeLayout {
     }
 
     private void refreshDjiDataHub(BaseProduct product) {
+        FlightAttemptDiagnosticLogger.start(getContext());
         DjiDataHub hub = DjiDataHub.getInstance();
         if (product instanceof Aircraft && product.isConnected()) {
             Aircraft aircraft = (Aircraft) product;

@@ -15,6 +15,19 @@ if [[ -n "$shared_video_owners" ]]; then
     exit 1
 fi
 
+flight_state_body="$(sed -n '/private void noteFlightState(/,/^    }/p' "$hub_path")"
+if rg -q 'setHomeLocation|setDjiHomeLocation' <<<"$flight_state_body"; then
+    printf 'Passive flight-state handling must never issue a DJI Home command.\n' >&2
+    exit 1
+fi
+
+virtual_stick_path="$source_root/demo/flightcontroller/VirtualStickView.java"
+init_params_body="$(sed -n '/private void initParams(/,/^    }/p' "$virtual_stick_path")"
+if rg -q 'setVirtualStick(ModeEnabled|AdvancedModeEnabled)' <<<"$init_params_body"; then
+    printf 'Opening the Virtual Stick demo must not change aircraft control modes.\n' >&2
+    exit 1
+fi
+
 state_owners="$(rg -l --glob '*.{java,kt}' 'setStateCallback\(' "$source_root" || true)"
 while IFS= read -r owner; do
     [[ -z "$owner" ]] && continue

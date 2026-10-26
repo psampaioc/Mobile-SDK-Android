@@ -44,6 +44,34 @@ else
     die "Gradle did not compile FlightReadinessModelTest"
 fi
 
+operate_shell_suite="$sample_root/app/build/intermediates/javac/debugUnitTest/classes/com/dji/sdk/sample/operate/OperateShellStateTest.class"
+if [[ -f "$operate_shell_suite" ]]; then
+    "$JAVA_HOME/bin/java" -cp "$classpath" com.dji.sdk.sample.operate.OperateShellStateTest
+else
+    die "Gradle did not compile OperateShellStateTest"
+fi
+
+primary_video_profile_suite="$sample_root/app/build/intermediates/javac/debugUnitTest/classes/com/dji/sdk/sample/operate/PrimaryVideoProfileSelectionTest.class"
+if [[ -f "$primary_video_profile_suite" ]]; then
+    "$JAVA_HOME/bin/java" -cp "$classpath" com.dji.sdk.sample.operate.PrimaryVideoProfileSelectionTest
+else
+    die "Gradle did not compile PrimaryVideoProfileSelectionTest"
+fi
+
+byte_rate_meter_suite="$sample_root/app/build/intermediates/javac/debugUnitTest/classes/com/dji/sdk/sample/transport/metrics/ByteRateMeterTest.class"
+if [[ -f "$byte_rate_meter_suite" ]]; then
+    "$JAVA_HOME/bin/java" -cp "$classpath" com.dji.sdk.sample.transport.metrics.ByteRateMeterTest
+else
+    die "Gradle did not compile ByteRateMeterTest"
+fi
+
+network_rtk_suite="$sample_root/app/build/intermediates/javac/debugUnitTest/classes/com/dji/sdk/sample/rtk/NetworkRtkProfileTest.class"
+if [[ -f "$network_rtk_suite" ]]; then
+    "$JAVA_HOME/bin/java" -cp "$classpath" com.dji.sdk.sample.rtk.NetworkRtkProfileTest
+else
+    die "Gradle did not compile NetworkRtkProfileTest"
+fi
+
 flight_readiness_session_suite="$sample_root/app/build/intermediates/javac/debugUnitTest/classes/com/dji/sdk/sample/operate/FlightReadinessSessionTest.class"
 if [[ -f "$flight_readiness_session_suite" ]]; then
     "$JAVA_HOME/bin/java" -cp "$classpath" com.dji.sdk.sample.operate.FlightReadinessSessionTest

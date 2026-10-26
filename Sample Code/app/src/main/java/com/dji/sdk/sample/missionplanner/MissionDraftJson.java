@@ -14,6 +14,7 @@ public final class MissionDraftJson {
     private static final String KEY_DEFAULT_ALTITUDE = "default_altitude_m";
     private static final String KEY_BASE_SPEED = "base_speed_m_s";
     private static final String KEY_FINISH_ACTION = "finish_action";
+    private static final String KEY_HEADING_MODE = "heading_mode";
     private static final String KEY_PLANNING_REFERENCE = "planning_reference";
     private static final String KEY_LATITUDE = "latitude_deg";
     private static final String KEY_LONGITUDE = "longitude_deg";
@@ -29,6 +30,7 @@ public final class MissionDraftJson {
         root.put(KEY_DEFAULT_ALTITUDE, draft.getDefaultAltitudeMeters());
         root.put(KEY_BASE_SPEED, draft.getBaseSpeedMetersPerSecond());
         root.put(KEY_FINISH_ACTION, draft.getFinishAction().name());
+        root.put(KEY_HEADING_MODE, draft.getHeadingMode().name());
         if (draft.getPlanningReferenceLatitude() != null) {
             JSONObject reference = new JSONObject();
             reference.put(KEY_LATITUDE, draft.getPlanningReferenceLatitude());
@@ -76,9 +78,13 @@ public final class MissionDraftJson {
             waypoints.add(new MissionWaypoint(value.getDouble(KEY_LATITUDE),
                     value.getDouble(KEY_LONGITUDE), altitudeOverride));
         }
+        MissionHeadingMode headingMode;
+        try { headingMode = root.has(KEY_HEADING_MODE)
+                ? MissionHeadingMode.valueOf(root.getString(KEY_HEADING_MODE)) : MissionHeadingMode.AUTO;
+        } catch (IllegalArgumentException exception) { throw new JSONException("Unsupported heading mode"); }
         MissionDraft draft = new MissionDraft(root.optString(KEY_NAME, "Untitled mission"),
                 (float) root.getDouble(KEY_DEFAULT_ALTITUDE),
-                (float) root.getDouble(KEY_BASE_SPEED), finishAction, waypoints,
+                (float) root.getDouble(KEY_BASE_SPEED), finishAction, headingMode, waypoints,
                 referenceLatitude, referenceLongitude);
         if (!MissionDraftValidator.validate(draft).isEmpty()) {
             throw new JSONException("Mission draft contains invalid values");

@@ -67,8 +67,8 @@ public final class JsonWireEncoderTest {
     }
 
     private static void testHealthAndMetadataAreCompact() {
-        byte[] health = JsonWireEncoder.health("session", 2, 999, 1, 2, 3, 4, 5,
-                6, 7, 8, 9, 10, 11);
+        byte[] health = JsonWireEncoder.health("session", 2, 999, 1, 2, 3, 4, 5, 6, 7,
+                8, 9, 10, 11, 12, 13);
         String healthJson = text(health);
         check(health.length <= TransportConfig.MAX_JSON_DATAGRAM_BYTES, "health budget");
         check(healthJson.contains("\"stream\":\"health:0\""), "health stream");
@@ -76,15 +76,14 @@ public final class JsonWireEncoderTest {
         Map<String, Object> parsedHealth = object(healthJson);
         keys(parsedHealth, "health envelope", "v", "type", "session", "stream", "seq", "rx_mono_ns", "data");
         keys(object(parsedHealth.get("data")), "health counters",
-                "primary_video_callbacks", "secondary_video_callbacks",
-                "primary_video_callback_drops", "secondary_video_callback_drops",
-                "primary_rtp_packets", "secondary_rtp_packets", "primary_access_units",
-                "secondary_access_units", "telemetry_queue_drops", "telemetry_socket_errors",
-                "video_socket_errors");
+                "primary_video_callbacks", "primary_video_callback_drops",
+                "primary_rtp_packets", "primary_rtp_bytes", "primary_access_units",
+                "telemetry_datagrams", "telemetry_bytes", "metadata_datagrams", "metadata_bytes",
+                "clock_pongs_sent", "telemetry_queue_drops", "telemetry_socket_errors", "video_socket_errors");
 
-        String fpv = text(JsonWireEncoder.frameMetadata("session", "secondary", 4, 0x11223344,
+        String fpv = text(JsonWireEncoder.frameMetadata("session", "primary", 4, 0x11223344,
                 100, 10, 11));
-        check(fpv.contains("\"feed\":\"fpv\""), "secondary metadata is fpv");
+        check(fpv.contains("\"feed\":\"primary\""), "only Primary metadata is emitted");
         check(!fpv.contains("physical_source"), "physical source excluded");
         check(!fpv.contains("first_rtp_seq"), "packet diagnostics excluded");
         keys(object(fpv), "video metadata", "v", "type", "session", "feed", "frame_seq",

@@ -24,7 +24,7 @@ public final class WaypointMissionFactory {
         builder.finishedAction(toDjiFinishAction(draft.getFinishAction()));
         builder.flightPathMode(WaypointMissionFlightPathMode.NORMAL);
         builder.gotoFirstWaypointMode(WaypointMissionGotoWaypointMode.SAFELY);
-        builder.headingMode(WaypointMissionHeadingMode.AUTO);
+        builder.headingMode(toDjiHeadingMode(draft.getHeadingMode()));
         builder.repeatTimes(1);
         builder.setExitMissionOnRCSignalLostEnabled(false);
         for (MissionWaypoint waypoint : draft.getWaypoints()) {
@@ -43,6 +43,14 @@ public final class WaypointMissionFactory {
             case HOVER_AT_FINAL:
             default:
                 return WaypointMissionFinishedAction.NO_ACTION;
+        }
+    }
+    private static WaypointMissionHeadingMode toDjiHeadingMode(MissionHeadingMode mode) {
+        switch (mode) {
+            case INITIAL_DIRECTION: return WaypointMissionHeadingMode.USING_INITIAL_DIRECTION;
+            case REMOTE_CONTROLLER: return WaypointMissionHeadingMode.CONTROL_BY_REMOTE_CONTROLLER;
+            case AUTO:
+            default: return WaypointMissionHeadingMode.AUTO;
         }
     }
 }

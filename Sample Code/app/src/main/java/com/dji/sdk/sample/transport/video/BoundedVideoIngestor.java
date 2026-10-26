@@ -57,8 +57,7 @@ public final class BoundedVideoIngestor {
         acceptedBytes.addAndGet(size);
         updateMinimum(minimumChunkBytes, size);
         updateMaximum(maximumChunkBytes, size);
-        captureInitialHex(source, size);
-        countAnnexBSignatures(source, size);
+        captureInitialDiagnostics(source, size);
         updateHighWaterMark(queue.size());
         return true;
     }
@@ -67,19 +66,44 @@ public final class BoundedVideoIngestor {
         return queue.poll();
     }
 
+    /** Drops queued callback fragments after an upstream discontinuity. */
+    public void discardQueued() {
+        EncodedVideoChunk chunk;
+        while ((chunk = queue.poll()) != null) {
+            droppedChunks.incrementAndGet();
+            droppedBytes.addAndGet(chunk.getData().length);
+        }
+    }
+
+    /** Makes the next offered chunk expose an upstream discontinuity to the drain worker. */
+    public void markDiscontinuity() {
+        nextSequence.incrementAndGet();
+    }
+
     public int size() {
         return queue.size();
     }
 
     public Counters snapshotCounters() {
-        long minimum = minimumChunkBytes.get();
-        return new Counters(acceptedChunks.get(), acceptedBytes.get(), droppedChunks.get(),
-                droppedBytes.get(), highWaterMark.get(), minimum == Long.MAX_VALUE ? 0 : minimum,
-                maximumChunkBytes.get(), initialHexSamples(), annexBThreeByteSignatures.get(),
-                annexBFourByteSignatures.get());
+        return snapshotCounters(-1L);
     }
 
-    private synchronized void captureInitialHex(byte[] source, int size) {
+    /**
+     * Snapshot the bounded queue. The optional monotonic {@code nowNanos} makes backlog age
+     * observable without changing the callback path; pass a negative value when unavailable.
+     */
+    public Counters snapshotCounters(long nowNanos) {
+        long minimum = minimumChunkBytes.get();
+        EncodedVideoChunk oldest = queue.peek();
+        long oldestQueueAgeNanos = nowNanos < 0L || oldest == null ? -1L
+                : Math.max(0L, nowNanos - oldest.getReceiveTimeNanos());
+        return new Counters(queue.size(), acceptedChunks.get(), acceptedBytes.get(), droppedChunks.get(),
+                droppedBytes.get(), highWaterMark.get(), minimum == Long.MAX_VALUE ? 0 : minimum,
+                maximumChunkBytes.get(), initialHexSamples(), annexBThreeByteSignatures.get(),
+                annexBFourByteSignatures.get(), oldestQueueAgeNanos);
+    }
+
+    private synchronized void captureInitialDiagnostics(byte[] source, int size) {
         if (initialHexSampleCount >= initialHexSamples.length) return;
         int count = Math.min(size, 32);
         StringBuilder out = new StringBuilder(count * 2);
@@ -90,6 +114,9 @@ public final class BoundedVideoIngestor {
             out.append(Integer.toHexString(value));
         }
         initialHexSamples[initialHexSampleCount++] = out.toString();
+        // Parser diagnostics already count every emitted start code on the worker. Sampling the
+        // first four callbacks keeps source framing evidence without scanning every DJI callback.
+        countAnnexBSignatures(source, size);
     }
 
     private synchronized String initialHexSamples() {
@@ -138,6 +165,7 @@ public final class BoundedVideoIngestor {
     }
 
     public static final class Counters {
+        public final int queueDepth;
         public final long acceptedChunks;
         public final long acceptedBytes;
         public final long droppedChunks;
@@ -148,12 +176,14 @@ public final class BoundedVideoIngestor {
         public final String initialHexSamples;
         public final long annexBThreeByteSignatures;
         public final long annexBFourByteSignatures;
+        /** Age of the oldest queued callback at snapshot time, or -1 when empty/unsampled. */
+        public final long oldestQueueAgeNanos;
 
-        Counters(long acceptedChunks, long acceptedBytes, long droppedChunks, long droppedBytes,
+        Counters(int queueDepth, long acceptedChunks, long acceptedBytes, long droppedChunks, long droppedBytes,
                 long highWaterMark, long minimumChunkBytes, long maximumChunkBytes,
                 String initialHexSamples, long annexBThreeByteSignatures,
-                long annexBFourByteSignatures) {
-            this.acceptedChunks = acceptedChunks;
+                long annexBFourByteSignatures, long oldestQueueAgeNanos) {
+            this.queueDepth = queueDepth; this.acceptedChunks = acceptedChunks;
             this.acceptedBytes = acceptedBytes;
             this.droppedChunks = droppedChunks;
             this.droppedBytes = droppedBytes;
@@ -163,6 +193,7 @@ public final class BoundedVideoIngestor {
             this.initialHexSamples = initialHexSamples;
             this.annexBThreeByteSignatures = annexBThreeByteSignatures;
             this.annexBFourByteSignatures = annexBFourByteSignatures;
+            this.oldestQueueAgeNanos = oldestQueueAgeNanos;
         }
     }
 }

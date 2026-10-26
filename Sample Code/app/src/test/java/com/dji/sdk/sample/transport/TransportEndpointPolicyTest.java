@@ -22,6 +22,9 @@ public final class TransportEndpointPolicyTest {
         require(TransportEndpointPolicy.decide("192.168.1.11", "192.168.1.10", false)
                         == TransportEndpointPolicy.Action.REPLACE,
                 "changing endpoint stops old runtime even while aircraft is unavailable");
+        require(TransportEndpointPolicy.decide("192.168.1.11", "192.168.1.10", true)
+                        == TransportEndpointPolicy.Action.REPLACE,
+                "changing endpoint while running replaces the session instead of retargeting sockets");
     }
 
     private static void require(boolean condition, String message) {

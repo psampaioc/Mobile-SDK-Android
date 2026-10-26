@@ -15,6 +15,14 @@ public final class OperateStatusModelTest {
         equal(OperateStatusModel.Severity.STALE,
                 OperateStatusModel.freshness(10L, 11L + OperateStatusModel.STATUS_STALE_AFTER_MS, true),
                 "older callback is stale");
+        equal(FlightReadinessModel.EvidenceState.WAITING_FOR_SAMPLE,
+                OperateStatusModel.evidence(-1L, 10L, true),
+                "supported component with no sample waits");
+        equal(FlightReadinessModel.EvidenceState.STALE,
+                OperateStatusModel.evidence(10L, 11L + OperateStatusModel.STATUS_STALE_AFTER_MS, true),
+                "old sample stays distinct from unavailable");
+        equal(FlightReadinessModel.EvidenceState.UNAVAILABLE,
+                OperateStatusModel.evidence(10L, 10L, false), "unsupported component is unavailable");
         equal(OperateStatusModel.Severity.CRITICAL,
                 OperateStatusModel.battery(15, 10L, 10L, true), "critical battery threshold");
         equal(OperateStatusModel.Severity.WARNING,

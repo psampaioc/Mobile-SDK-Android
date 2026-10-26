@@ -17,6 +17,22 @@ public final class OperateStatusModel {
         return nowMs - receivedAtMs > STATUS_STALE_AFTER_MS ? Severity.STALE : Severity.HEALTHY;
     }
 
+    public static boolean isFresh(long receivedAtMs, long nowMs) {
+        return receivedAtMs >= 0L && receivedAtMs <= nowMs
+                && nowMs - receivedAtMs <= STATUS_STALE_AFTER_MS;
+    }
+
+    /** Preserves whether live evidence is absent, stale, or unsupported for readiness details. */
+    @NonNull
+    public static FlightReadinessModel.EvidenceState evidence(long receivedAtMs, long nowMs,
+            boolean supported) {
+        if (!supported) return FlightReadinessModel.EvidenceState.UNAVAILABLE;
+        if (receivedAtMs < 0L) return FlightReadinessModel.EvidenceState.WAITING_FOR_SAMPLE;
+        return nowMs - receivedAtMs > STATUS_STALE_AFTER_MS
+                ? FlightReadinessModel.EvidenceState.STALE
+                : FlightReadinessModel.EvidenceState.LIVE;
+    }
+
     @NonNull
     public static Severity battery(int percent, long receivedAtMs, long nowMs, boolean supported) {
         Severity freshness = freshness(receivedAtMs, nowMs, supported);

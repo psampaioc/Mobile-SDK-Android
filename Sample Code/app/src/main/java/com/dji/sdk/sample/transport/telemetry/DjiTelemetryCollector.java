@@ -31,6 +31,12 @@ public final class DjiTelemetryCollector implements DjiDataHub.Listener {
     private final TelemetrySink sink;
     private final CallbackRateRegistry rateRegistry;
     private final Map<String, AtomicLong> sequences = new ConcurrentHashMap<>();
+    // Flight is the continuous navigation fallback. Track this path separately from health so a
+    // healthy heartbeat cannot mask a stopped DJI flight callback during a field pause.
+    private final AtomicLong flightCallbacks = new AtomicLong();
+    private final AtomicLong flightEventsEmitted = new AtomicLong();
+    private volatile long lastFlightCallbackNanos;
+    private volatile long lastFlightEventEmittedNanos;
     private CallbackMulticaster.Subscription subscription;
     private boolean running;
 
@@ -60,6 +66,9 @@ public final class DjiTelemetryCollector implements DjiDataHub.Listener {
     public synchronized boolean isRunning() { return running; }
 
     @Override public void onFlightState(@NonNull FlightControllerState state) {
+        long nowNanos = clock.nowNanos();
+        flightCallbacks.incrementAndGet();
+        lastFlightCallbackNanos = nowNanos;
         Map<String, TelemetryField> fields = new LinkedHashMap<>();
         LocationCoordinate3D location = state.getAircraftLocation();
         boolean positionValid = location != null && LocationCoordinate2D.isValid(
@@ -69,7 +78,9 @@ public final class DjiTelemetryCollector implements DjiDataHub.Listener {
         put(fields, "aircraft.altitude_m", location == null ? null : location.getAltitude(),
                 location != null && finite(location.getAltitude()));
         put(fields, "heading_deg", state.getAircraftHeadDirection(), finite(state.getAircraftHeadDirection()));
-        publish(SOURCE_FLIGHT_CONTROLLER, 0, clock.nowNanos(), fields);
+        publish(SOURCE_FLIGHT_CONTROLLER, 0, nowNanos, fields);
+        flightEventsEmitted.incrementAndGet();
+        lastFlightEventEmittedNanos = nowNanos;
     }
 
     @Override public void onRtkState(@NonNull RTKState state) {
@@ -109,5 +120,25 @@ public final class DjiTelemetryCollector implements DjiDataHub.Listener {
 
     private static boolean finite(float value) {
         return !Float.isNaN(value) && !Float.isInfinite(value);
+    }
+
+    public FlightDiagnostics flightDiagnostics() {
+        return new FlightDiagnostics(flightCallbacks.get(), lastFlightCallbackNanos,
+                flightEventsEmitted.get(), lastFlightEventEmittedNanos);
+    }
+
+    public static final class FlightDiagnostics {
+        public final long callbacks;
+        public final long lastCallbackNanos;
+        public final long eventsEmitted;
+        public final long lastEventEmittedNanos;
+
+        FlightDiagnostics(long callbacks, long lastCallbackNanos, long eventsEmitted,
+                long lastEventEmittedNanos) {
+            this.callbacks = callbacks;
+            this.lastCallbackNanos = lastCallbackNanos;
+            this.eventsEmitted = eventsEmitted;
+            this.lastEventEmittedNanos = lastEventEmittedNanos;
+        }
     }
 }

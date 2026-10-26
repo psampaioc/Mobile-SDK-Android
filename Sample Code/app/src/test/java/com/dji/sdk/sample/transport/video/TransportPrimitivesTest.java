@@ -6,11 +6,16 @@ import com.dji.sdk.sample.transport.rtp.RtpPacket;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 /** Dependency-free JVM unit tests; run via this class's main method. */
 public final class TransportPrimitivesTest {
     public static void main(String[] args) {
         testBoundedIngestionCopiesAndDropsOldest();
+        testExternalDiscontinuityIsOrderedBeforeNextChunk();
+        testVideoOfferDoesNotWaitForSlowSink();
+        testExternalDiscontinuityIsOrderedBeforeNextChunk();
         testAnnexBStartCodesAcrossChunkBoundaries();
         testLengthPrefixedNalUnits();
         testLengthPrefixedPrefixAcrossCallbacks();
@@ -25,6 +30,8 @@ public final class TransportPrimitivesTest {
         testSingleNalRtpAndClock();
         testFuAPacketizationIsMtuSafe();
         testPipelineAcrossArbitraryChunks();
+        testIndependentAccessUnitPipelineRecoversAtIdr();
+        PrimaryLiveFeedMetricsTest.run();
         System.out.println("TransportPrimitivesTest: all tests passed");
     }
 
@@ -48,6 +55,54 @@ public final class TransportPrimitivesTest {
         equal(1L, counters.droppedChunks, "dropped chunks");
         equal(1L, counters.droppedBytes, "dropped bytes");
         equal(2L, counters.highWaterMark, "queue high-water mark");
+        equal(-1L, counters.oldestQueueAgeNanos, "unsampled queue age is explicit");
+
+        queue.offer(new byte[] {6}, 1, 50);
+        BoundedVideoIngestor.Counters timed = queue.snapshotCounters(80);
+        equal(40L, timed.oldestQueueAgeNanos, "oldest retained queue age");
+    }
+
+    private static void testExternalDiscontinuityIsOrderedBeforeNextChunk() {
+        BoundedVideoIngestor queue = new BoundedVideoIngestor(2);
+        queue.offer(new byte[] {1}, 1, 10);
+        equal(0L, queue.poll().getSequence(), "initial sequence");
+        queue.markDiscontinuity();
+        queue.offer(new byte[] {2}, 1, 20);
+        equal(2L, queue.poll().getSequence(), "external loss leaves an ordered sequence gap");
+    }
+
+    private static void testVideoOfferDoesNotWaitForSlowSink() {
+        H264RtpPacketizer packetizer = new H264RtpPacketizer(1200, 96, 1, 1, 1);
+        EncodedVideoRtpPipeline pipeline = new EncodedVideoRtpPipeline(8, 4096, packetizer);
+        CountDownLatch sinkEntered = new CountDownLatch(1);
+        CountDownLatch releaseSink = new CountDownLatch(1);
+        byte[] stream = concat(bytes(0, 0, 1, 0x67, 0x11),
+                bytes(0, 0, 1, 0x68, 0x22), bytes(0, 0, 1, 0x65, 0x80));
+        pipeline.offer(stream, stream.length, 1_000L);
+        H264RtpPacketizer.PacketSink sink = packet -> {
+            sinkEntered.countDown();
+            try { releaseSink.await(1, TimeUnit.SECONDS); }
+            catch (InterruptedException error) { Thread.currentThread().interrupt(); }
+        };
+        Thread drain = new Thread(() -> {
+            pipeline.drain(8, sink);
+            pipeline.endOfStream(sink);
+        });
+        drain.start();
+        try {
+            check(sinkEntered.await(1, TimeUnit.SECONDS), "slow sink entered drain worker");
+            long started = System.nanoTime();
+            pipeline.offer(new byte[] {0}, 1, 2_000L);
+            long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+            check(elapsedMs < 100L, "video callback offer must not wait on the RTP sink");
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError(error);
+        } finally {
+            releaseSink.countDown();
+            try { drain.join(1000L); }
+            catch (InterruptedException error) { Thread.currentThread().interrupt(); }
+        }
     }
 
     private static void testAnnexBStartCodesAcrossChunkBoundaries() {
@@ -283,6 +338,29 @@ public final class TransportPrimitivesTest {
         equal(3, packets.size(), "SPS/PPS/IDR packetized without re-encoding");
         check(packets.get(2).isMarker(), "IDR closes RTP access unit");
         equal(1L, pipeline.accessUnitCounters().emittedAccessUnits, "pipeline AU counter");
+    }
+
+    private static void testIndependentAccessUnitPipelineRecoversAtIdr() {
+        EncodedVideoAccessUnitPipeline pipeline = new EncodedVideoAccessUnitPipeline(2, 4096);
+        List<H264AccessUnit> output = new ArrayList<>();
+        byte[] stream = concat(
+                bytes(0, 0, 1, 0x67, 0x11),
+                bytes(0, 0, 1, 0x68, 0x22),
+                bytes(0, 0, 1, 0x65, 0x80),
+                bytes(0, 0, 1, 0x09, 0x10));
+        pipeline.offer(stream, stream.length, 2_000L);
+        equal(1, pipeline.drain(4, output::add), "recording ingress drains a callback");
+        pipeline.endOfStream(output::add);
+        equal(1, output.size(), "recording pipeline receives an IDR access unit");
+        check(output.get(0).isKeyFrame(), "recording pipeline starts on IDR");
+        equal(3, output.get(0).getNalUnits().size(), "SPS PPS and IDR remain in decode order");
+
+        // Overflow makes the next retained chunk discontinuous; a non-IDR must not resume it.
+        pipeline.offer(bytes(0, 0, 1, 0x61, 0x80), 5, 2_010L);
+        pipeline.offer(bytes(0, 0, 1, 0x61, 0x80), 5, 2_020L);
+        pipeline.offer(bytes(0, 0, 1, 0x61, 0x80), 5, 2_030L);
+        pipeline.drain(4, output::add);
+        equal(1, output.size(), "discontinuity waits for the next IDR instead of emitting a partial frame");
     }
 
     private static H264NalUnit nal(int header, long timestamp, int... payload) {

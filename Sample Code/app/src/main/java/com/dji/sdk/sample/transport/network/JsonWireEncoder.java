@@ -44,7 +44,7 @@ public final class JsonWireEncoder {
         root.put("v", TransportConfig.PROTOCOL_VERSION);
         root.put("type", "video_au");
         root.put("session", session);
-        root.put("feed", "secondary".equals(feed) ? "fpv" : "primary");
+        root.put("feed", "primary");
         root.put("frame_seq", frameSequence);
         root.put("rtp_ssrc", Integer.toUnsignedLong(ssrc));
         root.put("rtp_ts", rtpTimestamp);
@@ -55,19 +55,21 @@ public final class JsonWireEncoder {
 
     public static byte[] health(String session, long sequence, long nowNanos,
             long telemetryDrops, long telemetryErrors, long primaryVideoDrops,
-            long secondaryVideoDrops, long videoSocketErrors, long primaryVideoCallbacks,
-            long secondaryVideoCallbacks, long primaryAccessUnits, long secondaryAccessUnits,
-            long primaryRtpPackets, long secondaryRtpPackets) {
+            long videoSocketErrors, long primaryVideoCallbacks, long primaryAccessUnits,
+            long primaryRtpPackets, long primaryRtpBytes, long telemetryDatagrams,
+            long telemetryBytes, long metadataDatagrams, long metadataBytes, long clockPongsSent) {
         LinkedHashMap<String, Object> root = envelope("health", session, "health:0", sequence, nowNanos);
         LinkedHashMap<String, Object> data = new LinkedHashMap<>();
         data.put("primary_video_callbacks", primaryVideoCallbacks);
-        data.put("secondary_video_callbacks", secondaryVideoCallbacks);
         data.put("primary_video_callback_drops", primaryVideoDrops);
-        data.put("secondary_video_callback_drops", secondaryVideoDrops);
         data.put("primary_rtp_packets", primaryRtpPackets);
-        data.put("secondary_rtp_packets", secondaryRtpPackets);
+        data.put("primary_rtp_bytes", primaryRtpBytes);
         data.put("primary_access_units", primaryAccessUnits);
-        data.put("secondary_access_units", secondaryAccessUnits);
+        data.put("telemetry_datagrams", telemetryDatagrams);
+        data.put("telemetry_bytes", telemetryBytes);
+        data.put("metadata_datagrams", metadataDatagrams);
+        data.put("metadata_bytes", metadataBytes);
+        data.put("clock_pongs_sent", clockPongsSent);
         data.put("telemetry_queue_drops", telemetryDrops);
         data.put("telemetry_socket_errors", telemetryErrors);
         data.put("video_socket_errors", videoSocketErrors);

@@ -1,6 +1,7 @@
 package com.dji.sdk.sample.transport.network;
 
 import com.dji.sdk.sample.transport.model.TelemetryEvent;
+import com.dji.sdk.sample.transport.TransportEgressMetrics;
 import com.dji.sdk.sample.transport.telemetry.TelemetrySink;
 
 import java.io.Closeable;
@@ -14,7 +15,13 @@ public final class TelemetryUdpSink implements TelemetrySink, Closeable {
     private final AtomicLong healthSequence = new AtomicLong();
 
     public TelemetryUdpSink(String host, int port) throws Exception {
-        sender = new BoundedUdpSender(host, port, 512, "dji-telemetry-udp");
+        this(host, port, null);
+    }
+
+    public TelemetryUdpSink(String host, int port, TransportEgressMetrics egressMetrics) throws Exception {
+        sender = new BoundedUdpSender(host, port, 512, "dji-telemetry-udp",
+                egressMetrics == null ? null : (bytes, acceptedAtNanos) ->
+                        egressMetrics.recordTelemetry(bytes));
     }
 
     @Override public void onTelemetry(TelemetryEvent event) {
@@ -31,16 +38,18 @@ public final class TelemetryUdpSink implements TelemetrySink, Closeable {
 
     public long getDroppedCount() { return sender.getDroppedCount(); }
     public long getErrorCount() { return sender.getErrorCount(); }
+    public long getAcceptedDatagramCount() { return sender.getAcceptedDatagramCount(); }
+    public long getAcceptedByteCount() { return sender.getAcceptedByteCount(); }
+    public BoundedUdpSender.Snapshot diagnostics() { return sender.snapshot(); }
     public byte[] sendHealth(String session, long nowNanos, long primaryVideoDrops,
-            long secondaryVideoDrops, long videoSocketErrors,
-            long primaryVideoCallbacks, long secondaryVideoCallbacks,
-            long primaryAccessUnits, long secondaryAccessUnits,
-            long primaryRtpPackets, long secondaryRtpPackets) {
+            long videoSocketErrors, long primaryVideoCallbacks, long primaryAccessUnits,
+            long primaryRtpPackets, long primaryRtpBytes, long metadataDatagrams,
+            long metadataBytes, long clockPongsSent) {
         byte[] health = JsonWireEncoder.health(session, healthSequence.getAndIncrement(), nowNanos,
                 sender.getDroppedCount(), sender.getErrorCount(), primaryVideoDrops,
-                secondaryVideoDrops, videoSocketErrors, primaryVideoCallbacks,
-                secondaryVideoCallbacks, primaryAccessUnits, secondaryAccessUnits,
-                primaryRtpPackets, secondaryRtpPackets);
+                videoSocketErrors, primaryVideoCallbacks, primaryAccessUnits, primaryRtpPackets,
+                primaryRtpBytes, sender.getAcceptedDatagramCount(), sender.getAcceptedByteCount(),
+                metadataDatagrams, metadataBytes, clockPongsSent);
         sender.offer(health);
         return health;
     }

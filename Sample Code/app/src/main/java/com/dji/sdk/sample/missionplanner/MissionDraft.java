@@ -12,6 +12,7 @@ public final class MissionDraft {
     private final float defaultAltitudeMeters;
     private final float baseSpeedMetersPerSecond;
     private final MissionFinishAction finishAction;
+    private final MissionHeadingMode headingMode;
     private final List<MissionWaypoint> waypoints;
     private final Double planningReferenceLatitude;
     private final Double planningReferenceLongitude;
@@ -19,10 +20,18 @@ public final class MissionDraft {
     public MissionDraft(String name, float defaultAltitudeMeters, float baseSpeedMetersPerSecond,
                         MissionFinishAction finishAction, List<MissionWaypoint> waypoints,
                         Double planningReferenceLatitude, Double planningReferenceLongitude) {
+        this(name, defaultAltitudeMeters, baseSpeedMetersPerSecond, finishAction, MissionHeadingMode.AUTO,
+                waypoints, planningReferenceLatitude, planningReferenceLongitude);
+    }
+
+    public MissionDraft(String name, float defaultAltitudeMeters, float baseSpeedMetersPerSecond,
+                        MissionFinishAction finishAction, MissionHeadingMode headingMode, List<MissionWaypoint> waypoints,
+                        Double planningReferenceLatitude, Double planningReferenceLongitude) {
         this.name = name == null ? "" : name.trim();
         this.defaultAltitudeMeters = defaultAltitudeMeters;
         this.baseSpeedMetersPerSecond = baseSpeedMetersPerSecond;
         this.finishAction = finishAction == null ? MissionFinishAction.HOVER_AT_FINAL : finishAction;
+        this.headingMode = headingMode == null ? MissionHeadingMode.AUTO : headingMode;
         this.waypoints = Collections.unmodifiableList(new ArrayList<>(waypoints == null
                 ? Collections.emptyList() : waypoints));
         this.planningReferenceLatitude = planningReferenceLatitude;
@@ -38,12 +47,13 @@ public final class MissionDraft {
     public float getDefaultAltitudeMeters() { return defaultAltitudeMeters; }
     public float getBaseSpeedMetersPerSecond() { return baseSpeedMetersPerSecond; }
     public MissionFinishAction getFinishAction() { return finishAction; }
+    public MissionHeadingMode getHeadingMode() { return headingMode; }
     public List<MissionWaypoint> getWaypoints() { return waypoints; }
     public Double getPlanningReferenceLatitude() { return planningReferenceLatitude; }
     public Double getPlanningReferenceLongitude() { return planningReferenceLongitude; }
 
     public MissionDraft withWaypoints(List<MissionWaypoint> nextWaypoints) {
-        return new MissionDraft(name, defaultAltitudeMeters, baseSpeedMetersPerSecond, finishAction,
+        return new MissionDraft(name, defaultAltitudeMeters, baseSpeedMetersPerSecond, finishAction, headingMode,
                 nextWaypoints, planningReferenceLatitude, planningReferenceLongitude);
     }
 
@@ -56,13 +66,14 @@ public final class MissionDraft {
                 && Float.compare(baseSpeedMetersPerSecond, that.baseSpeedMetersPerSecond) == 0
                 && Objects.equals(name, that.name)
                 && finishAction == that.finishAction
+                && headingMode == that.headingMode
                 && Objects.equals(waypoints, that.waypoints)
                 && Objects.equals(planningReferenceLatitude, that.planningReferenceLatitude)
                 && Objects.equals(planningReferenceLongitude, that.planningReferenceLongitude);
     }
 
     @Override public int hashCode() {
-        return Objects.hash(name, defaultAltitudeMeters, baseSpeedMetersPerSecond, finishAction,
+        return Objects.hash(name, defaultAltitudeMeters, baseSpeedMetersPerSecond, finishAction, headingMode,
                 waypoints, planningReferenceLatitude, planningReferenceLongitude);
     }
 }
